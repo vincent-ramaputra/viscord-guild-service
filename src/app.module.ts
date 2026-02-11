@@ -10,6 +10,7 @@ import { join } from "path";
 import { RedisModule } from './redis/redis.module';
 import { InvitesModule } from './invites/invites.module';
 import { RolesModule } from './roles/roles.module';
+import { HealthController } from './health/health.controller';
 
 @Module({
   imports: [ConfigModule.forRoot({
@@ -17,7 +18,7 @@ import { RolesModule } from './roles/roles.module';
     envFilePath: '.env'
   }),
     DatabaseModule, GuildsModule, ChannelsModule, RedisModule, InvitesModule, RolesModule],
-  controllers: [AppController],
+  controllers: [AppController, HealthController],
   providers: [AppService],
 })
 export class AppModule { }
