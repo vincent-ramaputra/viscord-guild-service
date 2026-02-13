@@ -12,6 +12,10 @@ export function denyPermission(basePermission: bigint, permission: bigint) {
     return basePermission & ~permission;
 }
 
+export function hasPermission(basePermission: bigint, permission: bigint) {
+    return (basePermission & permission) === permission;
+}
+
 export function applyChannelOverwrites(basePermission: bigint, overwrites: PermissionOverwrite[], userId: string, memberRoles: Role[], guildId: string) {
     let effective = basePermission;
     const everyoneOW = overwrites.find(ow => ow.targetId === guildId && ow.targetType === PermissionOverwriteTargetType.ROLE);

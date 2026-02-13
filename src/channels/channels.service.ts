@@ -42,7 +42,7 @@ import { GuildUpdateType } from "src/guilds/enums/guild-update-type.enum";
 import { PermissionOverwrite } from "./entities/permission-overwrite.entity";
 import { PermissionOverwriteResponseDTO } from "./dto/permission-overwrite-response.dto";
 import { GuildsService } from "src/guilds/guilds.service";
-import { allowPermission, applyChannelOverwrites, denyPermission } from "./helpers/permission.helper";
+import { allowPermission, applyChannelOverwrites, denyPermission, hasPermission } from "./helpers/permission.helper";
 import { PermissionOverwriteTargetType } from "./enums/permission-overwrite-target-type.enum";
 import { ALL_PERMISSIONS, Permissions } from "../guilds/enums/permissions.enum";
 import { UpdateChannelPermissionOverwriteDTO } from "./dto/update-channel-permission.dto";
@@ -1581,6 +1581,70 @@ export class ChannelsService {
       status: HttpStatus.NO_CONTENT,
       data: null,
       message: 'Permissions deleted successfully'
+    };
+  }
+
+  async canUserSendMessage(userId: string, channelId: string): Promise<Result<boolean>> {
+    if (userId == null || channelId == null) {
+      return {
+        status: HttpStatus.BAD_REQUEST,
+        data: false,
+        message: "Invalid request"
+      };
+    }
+
+    const channel = await this.channelsRepository.findOne({ where: { id: channelId }, relations: ['permissionOverwrites', 'recipients'] });
+
+    if (channel == null) {
+      return {
+        status: HttpStatus.BAD_REQUEST,
+        data: false,
+        message: "Invalid channel or user ID"
+      }
+    }
+
+    if (channel.type == ChannelType.DM) {
+      if (!channel.recipients.find(r => r.userId == userId)) {
+        return {
+          status: HttpStatus.FORBIDDEN,
+          data: false,
+          message: "User is not a recipient of this channel"
+        };
+      }
+    }
+    else {
+      const isMember = await this.guildsService.isGuildMember(userId, channel.guildId);
+      if (!isMember) {
+        return {
+          status: HttpStatus.FORBIDDEN,
+          data: false,
+          message: "User is not a member of this guild"
+        };
+      }
+
+      if (channel.type == ChannelType.Voice) {
+        return {
+          status: HttpStatus.FORBIDDEN,
+          data: false,
+          message: "Cannot send messages in this channel"
+        };
+      }
+
+      const permissions = await this.getEffectivePermission({userId, channelId, guildId: channel.guildId});
+      if (hasPermission(permissions, Permissions.SEND_MESSAGES)) {
+        return {
+          status: HttpStatus.FORBIDDEN,
+          data: false,
+          message: "User is not allowed to send messages on this channel"
+        };
+      } 
+    }
+
+
+    return {
+      status: HttpStatus.OK,
+      data: true,
+      message: ""
     };
   }
 

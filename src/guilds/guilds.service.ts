@@ -911,6 +911,17 @@ export class GuildsService {
     };
   }
 
+  async isGuildMember(userId: string, guildId: string): Promise<boolean> {
+    const isMember = await this.guildMembersRepository.exists({
+      where: {
+        userId: userId,
+        guildId: guildId,
+      }
+    });
+
+    return isMember;
+  }
+
   onModuleInit() {
     this.usersServiceGrpc = this.usersGRPCClient.getService<UserProfilesService>('UserProfilesService');
     createMap(mapper, CreateGuildDto, Guild);

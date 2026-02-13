@@ -8,6 +8,7 @@ service ChannelsService {
   rpc GetDMChannels (GetDMChannelsRequest) returns (GetDMChannelsResponse);
   rpc GetChannelById (GetChannelByIdRequest) returns (GetChannelByIdResponse);
   rpc IsUserChannelParticipant (IsUserChannelParticipantRequest) returns (IsUserChannelParticipantResponse);
+  rpc CanUserSendMessage(CanUserSendMessageRequest) returns (CanUserSendMessageResponse);
 }
 
 message AcknowledgeMessageRequest {
@@ -49,6 +50,17 @@ message IsUserChannelParticipantRequest {
 message IsUserChannelParticipantResponse {
   int32 status = 1;
   string message = 2;
+}
+
+message CanUserSendMessageRequest {
+  string userId = 1;
+  string channelId = 2;
+}
+
+message CanUserSendMessageResponse {
+  int32 status = 1;
+  bool data = 2;
+  string message = 3;
 }
 
 enum ChannelType {
@@ -122,7 +134,6 @@ message Role {
   string guildId = 6;
   int32 color = 7;
 }
-
 
 message GuildMember {
   string userId = 1;
