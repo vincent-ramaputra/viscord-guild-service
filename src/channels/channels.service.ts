@@ -1,4 +1,4 @@
-import { forwardRef, HttpStatus, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, forwardRef, HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { CreateChannelDTO } from './dto/create-channel.dto';
 import { CreateDMChannelDTO } from "./dto/create-dm-channel.dto";
 import { Result } from "src/interfaces/result.interface";
@@ -14,7 +14,7 @@ import { mapper } from "src/mappings/mappers";
 import { createMap, forMember, mapFrom } from "@automapper/core";
 import { ChannelType } from "./enums/channel-type.enum";
 import { UserProfileResponseDTO } from "src/user-profiles/dto/user-profile-response.dto";
-import { ClientGrpc, ClientProxy, ClientProxyFactory, GrpcMethod, Transport } from "@nestjs/microservices";
+import { ClientGrpc, ClientProxy, ClientProxyFactory, GrpcMethod, RpcException, Transport } from "@nestjs/microservices";
 import { CREATE_CONSUMER, CREATE_PRODUCER, CREATE_RTC_ANSWER, CREATE_RTC_OFFER, CREATE_TRANSPORT, GATEWAY_QUEUE, GET_VOICE_RINGS_EVENT, GET_VOICE_STATES_EVENT, GUILD_UPDATE_EVENT, MESSAGE_RECEIVED_EVENT, PRODUCER_CREATED, USER_TYPING_EVENT, VOICE_RING_DISMISS_EVENT, VOICE_RING_EVENT, VOICE_UPDATE_EVENT } from "src/constants/events";
 import { Payload } from "src/interfaces/payload.dto";
 import { UserTypingDTO } from "src/channels/dto/user-typing.dto";
@@ -42,12 +42,16 @@ import { GuildUpdateType } from "src/guilds/enums/guild-update-type.enum";
 import { PermissionOverwrite } from "./entities/permission-overwrite.entity";
 import { PermissionOverwriteResponseDTO } from "./dto/permission-overwrite-response.dto";
 import { GuildsService } from "src/guilds/guilds.service";
-import { allowPermission, applyChannelOverwrites, denyPermission, hasPermission } from "./helpers/permission.helper";
+import { allowPermission, applyChannelOverwrites, denyPermission, hasPermission, toBit } from "./helpers/permission.helper";
 import { PermissionOverwriteTargetType } from "./enums/permission-overwrite-target-type.enum";
 import { ALL_PERMISSIONS, Permissions } from "../guilds/enums/permissions.enum";
 import { UpdateChannelPermissionOverwriteDTO } from "./dto/update-channel-permission.dto";
 import { GuildMember } from "src/guilds/entities/guild-members.entity";
 import { MessageResponseDTO } from "src/messages/dto/message-response.dto";
+import { CanUserDeleteMessageRequest } from "./dto/can-user-delete-message.dto";
+import { CanUserDeleteMessageResponse } from "./dto/can-user-delete-message.response.dto";
+import { CheckPermissionResponseDTO } from "src/channels/dto/check-permission-response.dto";
+import { CheckPermissionDTO } from "./dto/check-permission.dto";
 
 @Injectable()
 export class ChannelsService {
@@ -1630,14 +1634,14 @@ export class ChannelsService {
         };
       }
 
-      const permissions = await this.getEffectivePermission({userId, channelId, guildId: channel.guildId});
-      if (hasPermission(permissions, Permissions.SEND_MESSAGES)) {
+      const permissions = await this.getEffectivePermission({ userId, channelId, guildId: channel.guildId });
+      if (!hasPermission(permissions, Permissions.SEND_MESSAGES)) {
         return {
           status: HttpStatus.FORBIDDEN,
           data: false,
           message: "User is not allowed to send messages on this channel"
         };
-      } 
+      }
     }
 
 
@@ -1648,6 +1652,146 @@ export class ChannelsService {
     };
   }
 
+  async canUserGetChannelMessages(userId: string, channelId: string): Promise<Result<boolean>> {
+    if (userId == null || channelId == null) {
+      return {
+        status: HttpStatus.BAD_REQUEST,
+        data: false,
+        message: "Invalid request"
+      };
+    }
+
+    const channel = await this.channelsRepository.findOne({ where: { id: channelId }, relations: ['permissionOverwrites', 'recipients'] });
+
+    if (channel == null) {
+      return {
+        status: HttpStatus.BAD_REQUEST,
+        data: false,
+        message: "Invalid channel or user ID"
+      }
+    }
+
+    if (channel.type == ChannelType.DM) {
+      if (!channel.recipients.find(r => r.userId == userId)) {
+        return {
+          status: HttpStatus.FORBIDDEN,
+          data: false,
+          message: "User is not a recipient of this channel"
+        };
+      }
+    }
+    else {
+      const isMember = await this.guildsService.isGuildMember(userId, channel.guildId);
+      if (!isMember) {
+        return {
+          status: HttpStatus.FORBIDDEN,
+          data: false,
+          message: "User is not a member of this guild"
+        };
+      }
+
+      if (channel.type == ChannelType.Voice) {
+        return {
+          status: HttpStatus.FORBIDDEN,
+          data: false,
+          message: "Cannot send messages in this channel"
+        };
+      }
+
+      const permissions = await this.getEffectivePermission({ userId, channelId, guildId: channel.guildId });
+      if (!hasPermission(permissions, Permissions.VIEW_CHANNELS)) {
+        return {
+          status: HttpStatus.FORBIDDEN,
+          data: false,
+          message: "User is not allowed to send messages on this channel"
+        };
+      }
+    }
+
+
+    return {
+      status: HttpStatus.OK,
+      data: true,
+      message: ""
+    };
+  }
+
+  async canUserDeleteMessage(dto: CanUserDeleteMessageRequest): Promise<CanUserDeleteMessageResponse> {
+    const channel = await this.channelsRepository.findOne({ where: { id: dto.channelId }, relations: ['permissionOverwrites', 'recipients'] });
+
+    if (!channel) {
+      throw new BadRequestException("Invalid channel ID");
+    }
+
+    if (channel.type === ChannelType.DM) {
+      console.log("checking for type dm", dto.messageAuthorId !== dto.userId, !channel.recipients.some(r => r.userId === dto.userId));
+      if (dto.messageAuthorId !== dto.userId || !channel.recipients.some(r => r.userId === dto.userId)) return { allowed: false };
+    }
+    else {
+      const isMember = await this.guildsService.isGuildMember(dto.userId, channel.guildId);
+      console.log("is member: ", isMember)
+      if (!isMember) return { allowed: false };
+
+      const permissions = await this.getEffectivePermission({ userId: dto.userId, guildId: channel.guildId, channelId: dto.channelId });
+      if (dto.messageAuthorId === dto.userId) {
+        if (!hasPermission(permissions, Permissions.VIEW_CHANNELS)) {
+          console.log("no view channels permission");
+          return { allowed: false };
+        }
+      }
+      else {
+        if (!hasPermission(permissions, Permissions.MANAGE_MESSAGES)) {
+          console.log("no manage message permission");
+          return { allowed: false };
+        }
+      }
+    }
+
+    return { allowed: true };
+  }
+
+  async checkPermission(dto: CheckPermissionDTO): Promise<CheckPermissionResponseDTO> {
+    if (dto.userId == null || dto.channelId == null) {
+      console.log('a')
+      throw new RpcException(new BadRequestException("Invalid channel or user ID"));
+    }
+
+    const channel = await this.channelsRepository.findOne({ where: { id: dto.channelId }, relations: ['permissionOverwrites', 'recipients'] });
+    if (channel == null) {
+      console.log('b')
+      throw new RpcException(new BadRequestException("Invalid channel or user ID"));
+    }
+
+    if (channel.type === ChannelType.DM) {
+      console.log('c')
+      throw new RpcException(new BadRequestException("DM channels do not have permissions"));
+    }
+
+    const isMember = await this.guildsService.isGuildMember(dto.userId, channel.guildId);
+    if (!isMember) {
+      console.log('d')
+      throw new RpcException(new ForbiddenException("User is not a member of this guild"));
+    }
+
+    if (channel.type === ChannelType.Voice) {
+      console.log('e')
+      throw new RpcException(new ForbiddenException("Cannot send messages in this channel"));
+    }
+
+    let permissionToCheck = 0n;
+    for (const permission of dto.permissions as number[]) {
+      permissionToCheck |= toBit(permission);
+    }
+
+    const grantedPermissions = await this.getEffectivePermission({ userId: dto.userId, channelId: dto.channelId, guildId: channel.guildId });
+    if (!hasPermission(grantedPermissions, permissionToCheck)) {
+      console.log('f')
+      return { allowed: false };
+    }
+
+    console.log('g')
+    return { allowed: true };
+  }
 
   private getVoiceChannelKey(channelId: string) {
     return `voice:channel:${channelId}`;

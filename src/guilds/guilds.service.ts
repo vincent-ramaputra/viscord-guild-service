@@ -30,7 +30,7 @@ import { UpdateRoleDTO } from "./dto/update-role.dto";
 import { AssignRoleDTO } from "./dto/assign-role.dto";
 import { GuildMemberResponseDTO } from "./dto/guild-member-response.dto";
 import { stat } from "fs";
-import { CheckPermissionDTO } from "./dto/check-permission.dto";
+import { CheckPermissionDTO } from "../channels/dto/check-permission.dto";
 import { deadlineToString } from "@grpc/grpc-js/build/src/deadline";
 import { PermissionOverwrite } from "src/channels/entities/permission-overwrite.entity";
 import { PermissionOverwriteResponseDTO } from "src/channels/dto/permission-overwrite-response.dto";
@@ -80,7 +80,6 @@ export class GuildsService {
       //create default guild template
 
       const owner = await this.guildMembersRepository.save({ guild: guild, userId: userId, roles: [] });
-      guild.owner = owner;
       // create channel categories and channels
 
       if (dto.iconImage) {
@@ -133,8 +132,8 @@ export class GuildsService {
       await this.guildsRepository.save(guild);
 
     } catch (error) {
-      await this.guildsRepository.delete(guild);
       console.error(error)
+      await this.guildsRepository.delete(guild);
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         message: "Failed saving guild data",
@@ -672,7 +671,7 @@ export class GuildsService {
       const effectivePermission = await (dto.channelId ?
         this.channelsService.getEffectivePermission({ userId: dto.userId, guildId: dto.guildId, channelId: dto.channelId }) :
         this.getBasePermission(dto.userId, dto.guildId));
-      return (effectivePermission & BigInt(dto.permission)) === BigInt(dto.permission);
+      return (effectivePermission & BigInt(dto.permissions as string)) === BigInt(dto.permissions as string);
     } catch (error) {
       console.error(error)
     }

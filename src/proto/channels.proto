@@ -2,13 +2,16 @@ syntax = "proto3";
 
 package channels;
 
+import "permissions.proto";
 
 service ChannelsService {
   rpc AcknowledgeMessage (AcknowledgeMessageRequest) returns (AcknowledgeMessageResponse);
   rpc GetDMChannels (GetDMChannelsRequest) returns (GetDMChannelsResponse);
   rpc GetChannelById (GetChannelByIdRequest) returns (GetChannelByIdResponse);
   rpc IsUserChannelParticipant (IsUserChannelParticipantRequest) returns (IsUserChannelParticipantResponse);
-  rpc CanUserSendMessage(CanUserSendMessageRequest) returns (CanUserSendMessageResponse);
+  rpc CanUserSendMessage (CanUserSendMessageRequest) returns (CanUserSendMessageResponse);
+  rpc CanUserDeleteMessage (CanUserDeleteMessageRequest) returns (CanUserDeleteMessageResponse);
+  rpc CheckPermission (CheckPermissionRequest) returns (CheckPermissionResponse);
 }
 
 message AcknowledgeMessageRequest {
@@ -58,6 +61,38 @@ message CanUserSendMessageRequest {
 }
 
 message CanUserSendMessageResponse {
+  int32 status = 1;
+  bool data = 2;
+  string message = 3;
+}
+
+message CanUserDeleteMessageRequest {
+  string userId = 1;
+  string channelId = 2;
+  string messageAuthorId = 4;
+}
+
+message CanUserDeleteMessageResponse {
+  bool allowed = 1;
+}
+
+message CheckPermissionRequest {
+  string userId = 1;
+  string channelId = 2;
+  repeated permissions.Permission permissions = 3;
+}
+
+message CheckPermissionResponse {
+  bool allowed = 1;
+}
+
+
+message CanUserGetChannelMessagesRequest {
+  string userId = 1;
+  string channelId = 2;
+}
+
+message CanUserGetChannelMessagesResponse {
   int32 status = 1;
   bool data = 2;
   string message = 3;

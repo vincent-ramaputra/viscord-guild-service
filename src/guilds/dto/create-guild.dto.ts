@@ -5,5 +5,4 @@ export class CreateGuildDto {
 
     @AutoMap()
     iconImage: Express.Multer.File;
-
 }

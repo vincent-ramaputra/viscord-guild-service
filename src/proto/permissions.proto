@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package permissions;
+
+enum Permission {
+    NONE = 0;
+
+    VIEW_CHANNELS = 1;
+    MANAGE_CHANNELS = 2;
+    MANAGE_ROLES = 3;
+    MANAGE_SERVERS = 4;
+    CREATE_INVITES = 5;
+    SEND_MESSAGES = 6;
+    ATTACH_FILES = 7;
+    MENTION_ROLES = 8;
+    MANAGE_MESSAGES = 9;
+    PIN_MESSAGES = 10;
+}

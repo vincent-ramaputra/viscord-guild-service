@@ -6,8 +6,8 @@ import { Response } from "express";
 import { GrpcMethod } from "@nestjs/microservices";
 import { UpdateRoleDTO } from "./dto/update-role.dto";
 import { AssignRoleDTO } from "./dto/assign-role.dto";
-import { CheckPermissionDTO } from "./dto/check-permission.dto";
-import { CheckPermissionResponseDTO } from "./dto/check-permission-response.dto";
+import { CheckPermissionDTO } from "../channels/dto/check-permission.dto";
+import { CheckPermissionResponseDTO } from "../channels/dto/check-permission-response.dto";
 import { UpdateMemberDTO } from "./dto/update-member.dto";
 import { dot } from "node:test/reporters";
 import { UpdateGuildDTO } from "./dto/update-guild.dto";
@@ -113,7 +113,7 @@ export class GuildsController {
 
   @GrpcMethod('GuildsService', 'CheckPermission')
   async checkPermission(dto: CheckPermissionDTO): Promise<CheckPermissionResponseDTO> {
-    return { isAllowed: await this.guildsService.checkPermission(dto) };
+    return { allowed: await this.guildsService.checkPermission(dto) };
   }
 
   @Get(':guildId/invites')

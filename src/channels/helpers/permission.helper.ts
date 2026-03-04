@@ -45,3 +45,11 @@ export function applyChannelOverwrites(basePermission: bigint, overwrites: Permi
 
     return effective;
 }
+
+export function toBit(permission: number) {
+    if (permission <= 0) {
+        throw new Error("Permission must be specified");
+    }
+
+    return 1n << BigInt(permission - 1);
+}

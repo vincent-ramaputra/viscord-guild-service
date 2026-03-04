@@ -1,5 +1,5 @@
 
 
 export interface CheckPermissionResponseDTO {
-    isAllowed: boolean;
+    allowed: boolean;
 }

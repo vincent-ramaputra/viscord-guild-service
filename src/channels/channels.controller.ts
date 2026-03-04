@@ -19,6 +19,8 @@ import { UpdateChannelPermissionOverwriteDTO } from "./dto/update-channel-permis
 import { MessageResponseDTO } from "src/messages/dto/message-response.dto";
 import { InvitesService } from "src/invites/invites.service";
 import { channel } from "diagnostics_channel";
+import { CanUserDeleteMessageRequest } from "./dto/can-user-delete-message.dto";
+import { CheckPermissionDTO } from "./dto/check-permission.dto";
 
 @Controller('guilds/:guildId/channels')
 export class GuildChannelsController {
@@ -234,7 +236,18 @@ export class ChannelsController {
     return await this.channelsService.isUserChannelParticipant(userId, channelId)
   }
 
-  @GrpcMethod("ChannelsService", "CanUserSendMessage")
+  @GrpcMethod('ChannelsService', 'CheckPermission')
+  async checkPermission(dto: CheckPermissionDTO) {
+    console.log(dto)
+    return await this.channelsService.checkPermission(dto);
+  }
+
+  @GrpcMethod('ChannelsService', "CanUserDeleteMessage")
+  async canUserDeleteMessage(dto: CanUserDeleteMessageRequest) {
+    return await this.channelsService.canUserDeleteMessage(dto);
+  }
+
+  @GrpcMethod('ChannelsService', 'CanUserSendMessage')
   async canUserSendMessage({userId, channelId}: {userId: string, channelId: string}) {
     return await this.channelsService.canUserSendMessage(userId, channelId);
   }
