@@ -3,9 +3,13 @@ import { AppModule } from './app.module';
 import { MicroserviceOptions, Transport } from "@nestjs/microservices";
 import { join } from "path";
 import { CHANNEL_QUEUE } from "./constants/events";
+import { AllExceptionsFilter } from './filters/all-exceptions.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  app.useGlobalFilters(new AllExceptionsFilter());
+  
   app.connectMicroservice<MicroserviceOptions>({
     transport: Transport.GRPC,
     options: {
