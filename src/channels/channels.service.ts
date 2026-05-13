@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, forwardRef, HttpStatus, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, forwardRef, HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import { CreateChannelDTO } from './dto/create-channel.dto';
 import { CreateDMChannelDTO } from "./dto/create-dm-channel.dto";
 import { Result } from "src/interfaces/result.interface";
@@ -55,6 +55,7 @@ import { CheckPermissionDTO } from "./dto/check-permission.dto";
 
 @Injectable()
 export class ChannelsService {
+  private readonly logger = new Logger(ChannelsService.name);
   private gatewayMQ: ClientProxy;
   private usersService: UserProfilesService;
   private messagesService: MessagesService;
@@ -146,7 +147,7 @@ export class ChannelsService {
         await this.permissionOverwritesRepository.save(channelToSave.permissionOverwrites);
       }
     } catch (error) {
-      console.error(error)
+      this.logger.error(error);
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -171,7 +172,7 @@ export class ChannelsService {
     try {
       this.gatewayMQ.emit(GUILD_UPDATE_EVENT, { recipients: guild.members.map(g => g.userId).filter(id => id !== userId), data: { guildId: guild.id, type: GuildUpdateType.CHANNEL_UPDATE, data: payload } } as Payload<GuildUpdateDTO>);
     } catch (error) {
-      console.error("Failed emitting channel delete update");
+      this.logger.error('Failed emitting channel create update');
     }
     return {
       status: HttpStatus.CREATED,
@@ -213,7 +214,7 @@ export class ChannelsService {
     try {
       await this.channelsRepository.delete({ id: channel.id });
     } catch (error) {
-      console.error(error);
+      this.logger.error(error);
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -231,7 +232,7 @@ export class ChannelsService {
         }
       } as Payload<GuildUpdateDTO>);
     } catch (error) {
-      console.error("Failed emitting channel delete update");
+      this.logger.error('Failed emitting channel delete update');
     }
 
     return {
@@ -297,7 +298,7 @@ export class ChannelsService {
 
       channel.recipients = recipients;
     } catch (error) {
-      console.error(error)
+      this.logger.error(error);
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -325,7 +326,7 @@ export class ChannelsService {
         .where('channel_recipient.user_id = :userId AND channel.type = :channelType', { userId: userId, channelType: ChannelType.DM })
         .select('channel').getMany();
     } catch (error) {
-      console.log(error)
+      this.logger.error(error);
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -694,7 +695,7 @@ export class ChannelsService {
     try {
       await pipeline.exec();
     } catch (error) {
-      console.error('Redis ring state error:', error);
+      this.logger.error({ error }, 'Redis ring state error');
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -708,7 +709,7 @@ export class ChannelsService {
         { recipients, data: ringPayloads } as Payload<VoiceRingStateDTO[]>
       );
     } catch (error) {
-      console.error('Emit ring event failed:', error);
+      this.logger.error({ error }, 'Emit ring event failed');
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -743,7 +744,7 @@ export class ChannelsService {
       await client.del(key);
       await client.sRem(this.getVoiceRingChannelkey(channelId), userId);
     } catch (error) {
-      console.error('Redis ring state error:', error);
+      this.logger.error({ error }, 'Redis ring state error');
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -757,7 +758,7 @@ export class ChannelsService {
         { recipients: [voiceRingState.initiatorId, voiceRingState.recipientId], data: voiceRingState } as Payload<VoiceRingStateDTO>
       );
     } catch (error) {
-      console.error('Emit ring event failed:', error);
+      this.logger.error({ error }, 'Emit ring event failed');
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -915,7 +916,7 @@ export class ChannelsService {
       }
       await client.del(this.getVoiceRingChannelkey(channelId));
     } catch (error) {
-      console.log(error);
+      this.logger.error(error);
     }
   }
 
@@ -1113,7 +1114,7 @@ export class ChannelsService {
     try {
       await this.channelsRepository.save(channel);
     } catch (error) {
-      console.error(error);
+      this.logger.error(error);
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -1134,7 +1135,7 @@ export class ChannelsService {
         }
       } as Payload<GuildUpdateDTO>);
     } catch (error) {
-      console.error("Failed emitting channel delete update");
+      this.logger.error('Failed emitting channel update');
     }
 
     return {
@@ -1177,7 +1178,7 @@ export class ChannelsService {
         message: 'User channel state retrieved successfully',
       };
     } catch (error) {
-      console.log('error', error);
+      this.logger.error(error);
     }
 
   }
@@ -1211,7 +1212,7 @@ export class ChannelsService {
       this.gatewayMQ.emit(MESSAGE_RECEIVED_EVENT, { recipients, data: dto } as Payload<MessageResponseDTO>)
     }
     catch (error) {
-      console.error(error);
+      this.logger.error(error);
     }
   }
 
@@ -1381,7 +1382,7 @@ export class ChannelsService {
       await this.permissionOverwritesRepository.save(overwrite);
     } catch (error) {
       // TODO: ROLLBACK transaction
-      console.error(error);
+      this.logger.error(error);
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -1405,7 +1406,7 @@ export class ChannelsService {
         }
       } as Payload<GuildUpdateDTO>)
     } catch (error) {
-      console.error(error)
+      this.logger.error(error);
     }
 
     return {
@@ -1459,7 +1460,7 @@ export class ChannelsService {
     try {
       await this.permissionOverwritesRepository.delete({ targetId: In(overwrites.map(ow => ow.targetId)), channelId: In(overwrites.map(ow => ow.channelId)) });
     } catch (error) {
-      console.error(error);
+      this.logger.error(error);
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -1470,7 +1471,7 @@ export class ChannelsService {
     try {
       await this.channelsRepository.save(channel);
     } catch (error) {
-      console.error(error);
+      this.logger.error(error);
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -1492,7 +1493,7 @@ export class ChannelsService {
         }
       } as Payload<GuildUpdateDTO>)
     } catch (error) {
-      console.error(error)
+      this.logger.error(error);
     }
 
     return {
@@ -1553,7 +1554,7 @@ export class ChannelsService {
       await this.permissionOverwritesRepository.delete({ targetId: overwrite.targetId, channelId: overwrite.channelId });
       channel.permissionOverwrites = channel.permissionOverwrites.filter(ow => ow.targetId !== targetId);
     } catch (error) {
-      console.error(error)
+      this.logger.error(error);
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -1578,7 +1579,7 @@ export class ChannelsService {
         }
       } as Payload<GuildUpdateDTO>)
     } catch (error) {
-      console.error(error);
+      this.logger.error(error);
     }
 
     return {
@@ -1724,24 +1725,20 @@ export class ChannelsService {
     }
 
     if (channel.type === ChannelType.DM) {
-      console.log("checking for type dm", dto.messageAuthorId !== dto.userId, !channel.recipients.some(r => r.userId === dto.userId));
       if (dto.messageAuthorId !== dto.userId || !channel.recipients.some(r => r.userId === dto.userId)) return { allowed: false };
     }
     else {
       const isMember = await this.guildsService.isGuildMember(dto.userId, channel.guildId);
-      console.log("is member: ", isMember)
       if (!isMember) return { allowed: false };
 
       const permissions = await this.getEffectivePermission({ userId: dto.userId, guildId: channel.guildId, channelId: dto.channelId });
       if (dto.messageAuthorId === dto.userId) {
         if (!hasPermission(permissions, Permissions.VIEW_CHANNELS)) {
-          console.log("no view channels permission");
           return { allowed: false };
         }
       }
       else {
         if (!hasPermission(permissions, Permissions.MANAGE_MESSAGES)) {
-          console.log("no manage message permission");
           return { allowed: false };
         }
       }
@@ -1752,29 +1749,24 @@ export class ChannelsService {
 
   async checkPermission(dto: CheckPermissionDTO): Promise<CheckPermissionResponseDTO> {
     if (dto.userId == null || dto.channelId == null) {
-      console.log('a')
       throw new RpcException(new BadRequestException("Invalid channel or user ID"));
     }
 
     const channel = await this.channelsRepository.findOne({ where: { id: dto.channelId }, relations: ['permissionOverwrites', 'recipients'] });
     if (channel == null) {
-      console.log('b')
       throw new RpcException(new BadRequestException("Invalid channel or user ID"));
     }
 
     if (channel.type === ChannelType.DM) {
-      console.log('c')
       throw new RpcException(new BadRequestException("DM channels do not have permissions"));
     }
 
     const isMember = await this.guildsService.isGuildMember(dto.userId, channel.guildId);
     if (!isMember) {
-      console.log('d')
       throw new RpcException(new ForbiddenException("User is not a member of this guild"));
     }
 
     if (channel.type === ChannelType.Voice) {
-      console.log('e')
       throw new RpcException(new ForbiddenException("Cannot send messages in this channel"));
     }
 
@@ -1785,11 +1777,9 @@ export class ChannelsService {
 
     const grantedPermissions = await this.getEffectivePermission({ userId: dto.userId, channelId: dto.channelId, guildId: channel.guildId });
     if (!hasPermission(grantedPermissions, permissionToCheck)) {
-      console.log('f')
       return { allowed: false };
     }
 
-    console.log('g')
     return { allowed: true };
   }
 

@@ -1,4 +1,4 @@
-import { forwardRef, HttpStatus, Inject, Injectable } from '@nestjs/common';
+import { forwardRef, HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import { CreateGuildDto } from './dto/create-guild.dto';
 import { InjectRepository } from "@nestjs/typeorm"
 import { Guild } from "./entities/guild.entity";
@@ -17,7 +17,6 @@ import { firstValueFrom } from "rxjs";
 import { UserProfileResponseDTO } from "src/user-profiles/dto/user-profile-response.dto";
 import { UserProfilesService } from "src/user-profiles/grpc/user-profiles.service";
 import { ClientGrpc, ClientProxy, ClientProxyFactory, Transport } from "@nestjs/microservices";
-import { UserChannelState } from "src/channels/entities/user-channel-state.entity";
 import { GATEWAY_QUEUE, GUILD_UPDATE_EVENT } from "src/constants/events";
 import { Payload } from "src/interfaces/payload.dto";
 import { GuildUpdateDTO } from "./dto/guild-update.dto";
@@ -42,6 +41,7 @@ import { DeleteRoleDTO } from "./dto/delete-role.dto";
 
 @Injectable()
 export class GuildsService {
+  private readonly logger = new Logger(GuildsService.name);
   private usersServiceGrpc: UserProfilesService;
   private gatewayMQ: ClientProxy;
   constructor(
@@ -132,7 +132,7 @@ export class GuildsService {
       await this.guildsRepository.save(guild);
 
     } catch (error) {
-      console.error(error)
+      this.logger.error(error);
       await this.guildsRepository.delete(guild);
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
@@ -201,9 +201,6 @@ export class GuildsService {
             channel.userChannelState = userChannelStateResponse.data;
             channel.permissionOverwrites = ch.permissionOverwrites.map(ow => mapper.map(ow, PermissionOverwrite, PermissionOverwriteResponseDTO))
 
-            if (channel.name === 'general') {
-              console.log(ch, channel);
-            }
             return channel;
           }),
         );
@@ -311,7 +308,7 @@ export class GuildsService {
       await this.guildMembersRepository.save(newMember);
       if (newMemberProfile[0]) this.gatewayMQ.emit(GUILD_UPDATE_EVENT, { recipients, data: { guildId, type: GuildUpdateType.MEMBER_JOIN, data: newMemberProfile.data[0] } } as Payload<GuildUpdateDTO>)
     } catch (error) {
-      console.log(error);
+      this.logger.error(error);
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -355,7 +352,7 @@ export class GuildsService {
       await this.guildMembersRepository.delete({ userId, guildId });
       this.gatewayMQ.emit(GUILD_UPDATE_EVENT, { recipients, data: { type: GuildUpdateType.MEMBER_LEAVE, data: userId, guildId } } as Payload<GuildUpdateDTO>)
     } catch (error) {
-      console.error(error);
+      this.logger.error(error);
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -469,7 +466,7 @@ export class GuildsService {
     try {
       await this.rolesRepository.save(role);
     } catch (error) {
-      console.error(error);
+      this.logger.error(error);
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -491,7 +488,7 @@ export class GuildsService {
         }
       } as Payload<GuildUpdateDTO>)
     } catch (error) {
-      console.error(error);
+      this.logger.error(error);
     }
 
     return {
@@ -564,7 +561,7 @@ export class GuildsService {
     try {
       await this.guildMembersRepository.save(updatedMembers)
     } catch (error) {
-      console.error(error);
+      this.logger.error(error);
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -590,7 +587,7 @@ export class GuildsService {
         }
       } as Payload<GuildUpdateDTO>)
     } catch (error) {
-      console.error(error)
+      this.logger.error(error);
     }
 
     return {
@@ -635,7 +632,7 @@ export class GuildsService {
 
       await this.rolesRepository.save(role);
     } catch (error) {
-      console.error(error);
+      this.logger.error(error);
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -656,7 +653,7 @@ export class GuildsService {
         }
       } as Payload<GuildUpdateDTO>)
     } catch (error) {
-      console.error(error)
+      this.logger.error(error);
     }
 
     return {
@@ -673,7 +670,7 @@ export class GuildsService {
         this.getBasePermission(dto.userId, dto.guildId));
       return (effectivePermission & BigInt(dto.permissions as string)) === BigInt(dto.permissions as string);
     } catch (error) {
-      console.error(error)
+      this.logger.error(error);
     }
 
     return false;
@@ -723,7 +720,7 @@ export class GuildsService {
     try {
       await this.guildMembersRepository.save(member);
     } catch (error) {
-      console.error(error);
+      this.logger.error(error);
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -748,7 +745,7 @@ export class GuildsService {
         }
       } as Payload<GuildUpdateDTO>);
     } catch (error) {
-      console.error(error);
+      this.logger.error(error);
     }
 
     return {
@@ -790,7 +787,7 @@ export class GuildsService {
     try {
       await this.guildsRepository.save(guild);
     } catch (error) {
-      console.error(error);
+      this.logger.error(error);
 
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
@@ -811,7 +808,7 @@ export class GuildsService {
         }
       } as Payload<GuildUpdateDTO>)
     } catch (error) {
-      console.error(error);
+      this.logger.error(error);
     }
 
     return {
@@ -882,7 +879,7 @@ export class GuildsService {
     try {
       await this.rolesRepository.delete({ id: dto.roleId });
     } catch (error) {
-      console.error(error);
+      this.logger.error(error);
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -900,7 +897,7 @@ export class GuildsService {
         }
       } as Payload<GuildUpdateDTO>)
     } catch (error) {
-      console.error(error)
+      this.logger.error(error);
     }
 
     return {

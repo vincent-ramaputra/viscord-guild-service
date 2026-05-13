@@ -1,11 +1,10 @@
-import { forwardRef, HttpStatus, Inject, Injectable } from '@nestjs/common';
+import { forwardRef, HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import { CreateInviteDto } from './dto/create-invite.dto';
 import { UpdateInviteDto } from './dto/update-invite.dto';
 import { IsNull, MoreThan, Or, Repository } from "typeorm";
 import { Invite } from "./entities/invite.entity";
 import { InjectRepository } from "@nestjs/typeorm";
 import { generateRandomString } from "src/helpers/string";
-import { generate } from "rxjs";
 import { Result } from "src/interfaces/result.interface";
 import { createMap } from "@automapper/core";
 import { mapper } from "src/mappings/mappers";
@@ -13,13 +12,13 @@ import { InviteResponseDTO } from "./dto/invite-response.dto";
 import { GuildResponseDTO } from "src/guilds/dto/guild-response.dto";
 import { GuildsService } from "src/guilds/guilds.service";
 import { Guild } from "src/guilds/entities/guild.entity";
-import { Channel } from "src/channels/entities/channel.entity";
 import { ChannelType } from "src/channels/enums/channel-type.enum";
 import { ChannelsService } from "src/channels/channels.service";
 import { Permissions } from "src/guilds/enums/permissions.enum";
 
 @Injectable()
 export class InvitesService {
+  private readonly logger = new Logger(InvitesService.name);
   private readonly INVITE_CODE_LENGTH = 8;
 
   constructor(
@@ -29,7 +28,7 @@ export class InvitesService {
     @InjectRepository(Guild) private readonly guildsRepository: Repository<Guild>
   ) { }
   async createOrGet(dto: CreateInviteDto): Promise<Result<InviteResponseDTO>> {
-    console.log('max age', dto.maxAge);
+    this.logger.debug(`createOrGet inviteDto: maxAge=${dto.maxAge}`);
     if (!dto.inviterId || !dto.guildId) {
       return {
         status: HttpStatus.BAD_REQUEST,
@@ -78,11 +77,10 @@ export class InvitesService {
 
     const invite = mapper.map(dto, CreateInviteDto, Invite);
 
-    console.log('maxage', dto.maxAge);
     if (dto.maxAge) {
       const expiresDate = new Date();
       expiresDate.setSeconds(expiresDate.getSeconds() + dto.maxAge);
-      console.log('setting expire data', expiresDate.toDateString())
+      this.logger.debug(`setting invite expiry: ${expiresDate.toISOString()}`);
       invite.expiresAt = expiresDate;
     }
 
@@ -91,7 +89,7 @@ export class InvitesService {
     try {
       await this.invitesRepository.save(invite);
     } catch (error) {
-      console.error(error);
+      this.logger.error(error);
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,
@@ -175,7 +173,7 @@ export class InvitesService {
     try {
       await this.invitesRepository.delete({ id: invite.id });
     } catch (error) {
-      console.error(error);
+      this.logger.error(error);
       return {
         status: HttpStatus.INTERNAL_SERVER_ERROR,
         data: null,

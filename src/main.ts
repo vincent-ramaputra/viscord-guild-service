@@ -4,9 +4,11 @@ import { MicroserviceOptions, Transport } from "@nestjs/microservices";
 import { join } from "path";
 import { CHANNEL_QUEUE } from "./constants/events";
 import { AllExceptionsFilter } from './filters/all-exceptions.filter';
+import { Logger } from 'nestjs-pino';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  app.useLogger(app.get(Logger));
 
   app.useGlobalFilters(new AllExceptionsFilter());
   
