@@ -63,6 +63,19 @@ export class GuildsService {
     });
   }
 
+  /**
+   * Builds the full, client-facing guild icon URL from the stored value.
+   * `guild.iconURL` only holds the uploaded object's filename; the object key is
+   * prefixed per-guild (`icons/<guildId>/<filename>`) and the public URL adds the
+   * CDN endpoint + bucket via `StorageService.toPublicURL`.
+   */
+  private resolveIconURL(guild: Guild): string | undefined {
+    if (!guild.iconURL) return undefined;
+    // Tolerate legacy rows that already stored an absolute URL.
+    if (/^https?:\/\//i.test(guild.iconURL)) return guild.iconURL;
+    return this.storageService.toPublicURL(`icons/${guild.id}/${guild.iconURL}`);
+  }
+
   async create(userId: string, dto: CreateGuildDto): Promise<Result<GuildResponseDTO>> {
     if (!dto.name || dto.name.length === 0) {
       return {
@@ -208,7 +221,7 @@ export class GuildsService {
         data.roles = guild.roles.map(role => mapper.map(role, Role, RoleResponseDTO));
         data.createdAt = guild.createdAt;
         data.updatedAt = guild.updatedAt;
-        data.iconURL = guild.iconURL;
+        data.iconURL = this.resolveIconURL(guild);
 
         return data;
       }),
@@ -269,6 +282,7 @@ export class GuildsService {
     }));
 
     data.roles = guild.roles.map(role => mapper.map(role, Role, RoleResponseDTO));
+    data.iconURL = this.resolveIconURL(guild);
 
     return {
       status: HttpStatus.OK,
@@ -797,6 +811,7 @@ export class GuildsService {
     }
 
     const guildDTO = mapper.map(guild, Guild, GuildResponseDTO);
+    guildDTO.iconURL = this.resolveIconURL(guild);
 
     try {
       this.gatewayMQ.emit(GUILD_UPDATE_EVENT, {
