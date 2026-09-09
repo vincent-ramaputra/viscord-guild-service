@@ -1,5 +1,4 @@
 import { AutoMap } from "@automapper/classes";
-import { StartSingleWirelessDeviceImportTaskRequest } from "aws-sdk/clients/iotwireless";
 
 export class UpdateRoleDTO {
     @AutoMap()
