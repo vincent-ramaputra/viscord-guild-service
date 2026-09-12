@@ -1,6 +1,5 @@
 import { Column, Entity, JoinColumn, ManyToOne, PrimaryColumn } from "typeorm";
 import { Channel } from "./channel.entity";
-import { AutoMap } from "@automapper/classes";
 
 @Entity()
 export class UserChannelState {
@@ -10,7 +9,6 @@ export class UserChannelState {
     @PrimaryColumn('uuid', {name: 'user_id'})
     userId: string
 
-    @AutoMap()
     @Column({name: 'last_read_id', nullable: true})
     lastReadId?: string
 

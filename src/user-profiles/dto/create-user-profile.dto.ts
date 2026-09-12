@@ -1,13 +1,9 @@
-import { AutoMap } from "@automapper/classes";
 
 export class CreateUserProfileDto {
-    @AutoMap()
     id: string;
 
-    @AutoMap()
     username: string;
 
-    @AutoMap()
     displayName: string;
 
     validate(): (string | undefined) {

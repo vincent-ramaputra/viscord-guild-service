@@ -3,8 +3,7 @@ import { CreateGuildDto } from './dto/create-guild.dto';
 import { InjectRepository } from "@nestjs/typeorm"
 import { Guild } from "./entities/guild.entity";
 import { Repository } from "typeorm";
-import { mapper } from "src/mappings/mappers";
-import { createMap, forMember, mapFrom } from "@automapper/core";
+import { toChannelResponseDTO, toGuildEntity, toGuildResponseDTO, toPermissionOverwriteResponseDTO, toRoleResponseDTO } from "src/mappings/mappers";
 import { GuildMember } from "./entities/guild-members.entity";
 import { Result } from "../interfaces/result.interface"
 import { GuildResponseDTO } from "./dto/guild-response.dto";
@@ -85,7 +84,7 @@ export class GuildsService {
       };
     }
 
-    const guild = mapper.map(dto, CreateGuildDto, Guild);
+    const guild = toGuildEntity(dto);
     guild.ownerId = userId;
 
     try {
@@ -190,7 +189,7 @@ export class GuildsService {
 
     const result = await Promise.all(
       guilds.map(async (guild) => {
-        const data = mapper.map(guild, Guild, GuildResponseDTO);
+        const data = toGuildResponseDTO(guild);
 
         const membersResponse: Result<UserProfileResponseDTO[]> =
           await firstValueFrom(
@@ -208,17 +207,17 @@ export class GuildsService {
 
         data.channels = await Promise.all(
           guild.channels.map(async (ch) => {
-            const channel = mapper.map(ch, Channel, ChannelResponseDTO);
+            const channel = toChannelResponseDTO(ch);
 
             const userChannelStateResponse = await this.channelsService.getUserChannelState(userId, channel.id);
             channel.userChannelState = userChannelStateResponse.data;
-            channel.permissionOverwrites = ch.permissionOverwrites.map(ow => mapper.map(ow, PermissionOverwrite, PermissionOverwriteResponseDTO))
+            channel.permissionOverwrites = ch.permissionOverwrites.map(toPermissionOverwriteResponseDTO)
 
             return channel;
           }),
         );
 
-        data.roles = guild.roles.map(role => mapper.map(role, Role, RoleResponseDTO));
+        data.roles = guild.roles.map(toRoleResponseDTO);
         data.createdAt = guild.createdAt;
         data.updatedAt = guild.updatedAt;
         data.iconURL = this.resolveIconURL(guild);
@@ -264,7 +263,7 @@ export class GuildsService {
       };
     }
 
-    const data = mapper.map(guild, Guild, GuildResponseDTO);
+    const data = toGuildResponseDTO(guild);
     const membersResponse: Result<UserProfileResponseDTO[]> = await firstValueFrom(this.usersServiceGrpc.getUserProfiles({ userIds: guild.members.map(re => re.userId) }));
 
     const memberProfiles = membersResponse.data;
@@ -277,11 +276,11 @@ export class GuildsService {
 
 
     data.channels = await Promise.all(guild.channels.map(async ch => {
-      const channel = mapper.map(ch, Channel, ChannelResponseDTO);
+      const channel = toChannelResponseDTO(ch);
       return channel;
     }));
 
-    data.roles = guild.roles.map(role => mapper.map(role, Role, RoleResponseDTO));
+    data.roles = guild.roles.map(toRoleResponseDTO);
     data.iconURL = this.resolveIconURL(guild);
 
     return {
@@ -490,7 +489,7 @@ export class GuildsService {
 
     const recipients = guild.members.filter(gm => gm.userId !== dto.userId).map(gm => gm.userId);
 
-    const roleDTO = mapper.map(role, Role, RoleResponseDTO);
+    const roleDTO = toRoleResponseDTO(role);
 
     try {
       this.gatewayMQ.emit(GUILD_UPDATE_EVENT, {
@@ -654,7 +653,7 @@ export class GuildsService {
       }
     }
 
-    const roleDTO = mapper.map(role, Role, RoleResponseDTO);
+    const roleDTO = toRoleResponseDTO(role);
     const recipients = guild.members.filter(m => m.userId !== userId).map(m => m.userId);
 
     try {
@@ -810,7 +809,7 @@ export class GuildsService {
       }
     }
 
-    const guildDTO = mapper.map(guild, Guild, GuildResponseDTO);
+    const guildDTO = toGuildResponseDTO(guild);
     guildDTO.iconURL = this.resolveIconURL(guild);
 
     try {
@@ -935,11 +934,5 @@ export class GuildsService {
 
   onModuleInit() {
     this.usersServiceGrpc = this.usersGRPCClient.getService<UserProfilesService>('UserProfilesService');
-    createMap(mapper, CreateGuildDto, Guild);
-    createMap(mapper, Guild, GuildResponseDTO);
-    createMap(mapper, Role, RoleResponseDTO, forMember(
-      dest => dest.permissions,
-      mapFrom(src => src.permissions.toString())
-    ));
   }
 }

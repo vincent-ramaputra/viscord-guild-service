@@ -6,8 +6,7 @@ import { Invite } from "./entities/invite.entity";
 import { InjectRepository } from "@nestjs/typeorm";
 import { generateRandomString } from "src/helpers/string";
 import { Result } from "src/interfaces/result.interface";
-import { createMap } from "@automapper/core";
-import { mapper } from "src/mappings/mappers";
+import { toInviteEntity, toInviteResponseDTO } from "src/mappings/mappers";
 import { InviteResponseDTO } from "./dto/invite-response.dto";
 import { GuildResponseDTO } from "src/guilds/dto/guild-response.dto";
 import { GuildsService } from "src/guilds/guilds.service";
@@ -75,7 +74,7 @@ export class InvitesService {
 
     const code = await this.generateInviteCode();
 
-    const invite = mapper.map(dto, CreateInviteDto, Invite);
+    const invite = toInviteEntity(dto);
 
     if (dto.maxAge) {
       const expiresDate = new Date();
@@ -97,7 +96,7 @@ export class InvitesService {
       };
     }
 
-    const payload: InviteResponseDTO = mapper.map(invite, Invite, InviteResponseDTO);
+    const payload: InviteResponseDTO = toInviteResponseDTO(invite);
 
     return {
       status: HttpStatus.OK,
@@ -109,7 +108,7 @@ export class InvitesService {
   async getChannelInvites(channelId: string): Promise<Result<InviteResponseDTO[]>> {
     const invites = await this.invitesRepository.findBy({ channelId, expiresAt: Or(MoreThan(new Date()), IsNull()) });
 
-    const payload: InviteResponseDTO[] = invites.map(invite => mapper.map(invite, Invite, InviteResponseDTO));
+    const payload: InviteResponseDTO[] = invites.map(toInviteResponseDTO);
 
     return {
       status: HttpStatus.OK,
@@ -121,7 +120,7 @@ export class InvitesService {
   async getGuildInvites(guildId: string): Promise<Result<InviteResponseDTO[]>> {
     const invites = await this.invitesRepository.findBy({ guildId, expiresAt: Or(MoreThan(new Date()), IsNull()) });
 
-    const payload: InviteResponseDTO[] = invites.map(invite => mapper.map(invite, Invite, InviteResponseDTO));
+    const payload: InviteResponseDTO[] = invites.map(toInviteResponseDTO);
 
     return {
       status: HttpStatus.OK,
@@ -132,7 +131,7 @@ export class InvitesService {
 
   async findOne(channelId: string, maxAge: number | null): Promise<Result<InviteResponseDTO>> {
     const existingInvite = await this.invitesRepository.findOneBy({ channelId, maxAge: maxAge ?? IsNull() });
-    const payload: InviteResponseDTO = mapper.map(existingInvite, Invite, InviteResponseDTO);
+    const payload: InviteResponseDTO = toInviteResponseDTO(existingInvite);
 
     if (!existingInvite) {
       return {
@@ -223,8 +222,4 @@ export class InvitesService {
     return code;
   }
 
-  onModuleInit() {
-    createMap(mapper, CreateInviteDto, Invite);
-    createMap(mapper, Invite, InviteResponseDTO);
-  }
 }

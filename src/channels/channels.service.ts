@@ -10,8 +10,7 @@ import { In, Not, Repository } from "typeorm";
 import { Channel } from "./entities/channel.entity";
 import { InjectRepository } from "@nestjs/typeorm";
 import { ChannelRecipient } from "./entities/channel-recipient.entity";
-import { mapper } from "src/mappings/mappers";
-import { createMap, forMember, mapFrom } from "@automapper/core";
+import { toChannelEntityFromCreateDMDTO, toChannelEntityFromCreateDTO, toChannelResponseDTO, toPermissionOverwriteResponseDTO, toUserChannelStateResponseDTO } from "src/mappings/mappers";
 import { ChannelType } from "./enums/channel-type.enum";
 import { UserProfileResponseDTO } from "src/user-profiles/dto/user-profile-response.dto";
 import { ClientGrpc, ClientProxy, ClientProxyFactory, GrpcMethod, RpcException, Transport } from "@nestjs/microservices";
@@ -110,7 +109,7 @@ export class ChannelsService {
       };
     }
 
-    const channelToSave = mapper.map(dto, CreateChannelDTO, Channel);
+    const channelToSave = toChannelEntityFromCreateDTO(dto);
     channelToSave.ownerId = userId;
     if (!dto.parentId) {
       channelToSave.isSynced = false;
@@ -160,14 +159,14 @@ export class ChannelsService {
       relations: ['parent', 'permissionOverwrites'],
     });
 
-    const payload = mapper.map(channelWithRelations, Channel, ChannelResponseDTO);
+    const payload = toChannelResponseDTO(channelWithRelations);
 
     const recipientResponse = await firstValueFrom(this.usersService.getUserProfiles({ userIds: guild.members.map(m => m.userId) }));
     if (recipientResponse.status === HttpStatus.OK) {
       payload.recipients = recipientResponse.data;
     }
 
-    payload.permissionOverwrites = channelWithRelations.permissionOverwrites.map(ow => mapper.map(ow, PermissionOverwrite, PermissionOverwriteResponseDTO));
+    payload.permissionOverwrites = channelWithRelations.permissionOverwrites.map(toPermissionOverwriteResponseDTO);
 
     try {
       this.gatewayMQ.emit(GUILD_UPDATE_EVENT, { recipients: guild.members.map(g => g.userId).filter(id => id !== userId), data: { guildId: guild.id, type: GuildUpdateType.CHANNEL_UPDATE, data: payload } } as Payload<GuildUpdateDTO>);
@@ -287,7 +286,7 @@ export class ChannelsService {
       };
     }
 
-    const channel = mapper.map(dto, CreateDMChannelDTO, Channel);
+    const channel = toChannelEntityFromCreateDMDTO(dto);
     channel.type = ChannelType.DM;
     channel.ownerId = userId;
 
@@ -306,7 +305,7 @@ export class ChannelsService {
       };
     }
 
-    const responseDTO = mapper.map(channel, Channel, ChannelResponseDTO);
+    const responseDTO = toChannelResponseDTO(channel);
     responseDTO.recipients = [recipientResponse.data[0]];
 
     return {
@@ -334,7 +333,7 @@ export class ChannelsService {
       };
     }
 
-    const dto: ChannelResponseDTO[] = channels.map(channel => mapper.map(channel, Channel, ChannelResponseDTO));
+    const dto: ChannelResponseDTO[] = channels.map(toChannelResponseDTO);
     for (const channel of dto) {
       const recipients = await this.channelRecipientsRepository.findBy({ channelId: channel.id });
       const userChannelStateResponse = await this.getUserChannelState(userId, channel.id);
@@ -371,7 +370,7 @@ export class ChannelsService {
       .where('channel.guildId = :guildId', { guildId: guildId })
       .getMany();
 
-    const data = channels.map(ch => mapper.map(ch, Channel, ChannelResponseDTO));
+    const data = channels.map(toChannelResponseDTO);
 
     return {
       status: HttpStatus.OK,
@@ -411,7 +410,7 @@ export class ChannelsService {
       };
     }
 
-    const data = mapper.map(channel, Channel, ChannelResponseDTO);
+    const data = toChannelResponseDTO(channel);
     data.recipients = await Promise.all(channel.recipients.filter(re => re.userId !== userId).map(async r => (await this.getRecipientDetail(r.userId)).data));
 
     return {
@@ -480,7 +479,7 @@ export class ChannelsService {
       };
     }
 
-    const data = mapper.map(channel, Channel, ChannelResponseDTO);
+    const data = toChannelResponseDTO(channel);
 
     if (channel.type === ChannelType.DM) {
       const channelRecipients = await this.getChannelRecipients(channelId);
@@ -1123,7 +1122,7 @@ export class ChannelsService {
     }
 
 
-    const payload = mapper.map(channel, Channel, ChannelResponseDTO);
+    const payload = toChannelResponseDTO(channel);
     const recipients = guild.members.map(m => m.userId).filter(id => id !== userId);
     try {
       this.gatewayMQ.emit(GUILD_UPDATE_EVENT, {
@@ -1170,7 +1169,7 @@ export class ChannelsService {
     }
 
     try {
-      const dto = state ? mapper.map(state, UserChannelState, UserChannelStateResponseDTO) : new UserChannelStateResponseDTO();
+      const dto = state ? toUserChannelStateResponseDTO(state) : new UserChannelStateResponseDTO();
       dto.unreadCount = unreadCount;
       return {
         status: HttpStatus.OK,
@@ -1393,8 +1392,8 @@ export class ChannelsService {
     const overwrites = await this.permissionOverwritesRepository.findBy({ channelId: dto.channelId });
     const recipients = guild.members.filter(m => m.userId !== dto.userId).map(r => r.userId);
 
-    const channelDTO = mapper.map(channel, Channel, ChannelResponseDTO);
-    channelDTO.permissionOverwrites = overwrites.map(ow => mapper.map(ow, PermissionOverwrite, PermissionOverwriteResponseDTO));
+    const channelDTO = toChannelResponseDTO(channel);
+    channelDTO.permissionOverwrites = overwrites.map(toPermissionOverwriteResponseDTO);
 
     try {
       this.gatewayMQ.emit(GUILD_UPDATE_EVENT, {
@@ -1411,7 +1410,7 @@ export class ChannelsService {
 
     return {
       status: HttpStatus.OK,
-      data: mapper.map(overwrite, PermissionOverwrite, PermissionOverwriteResponseDTO),
+      data: toPermissionOverwriteResponseDTO(overwrite),
       message: 'Permission updated successfully'
     };
   }
@@ -1479,7 +1478,7 @@ export class ChannelsService {
       };
     }
 
-    const channelDTO = mapper.map(channel, Channel, ChannelResponseDTO);
+    const channelDTO = toChannelResponseDTO(channel);
 
     const guild = await this.guildsRepository.findOne({ where: { id: channel.guildId }, relations: ['roles', 'members'] });
     const recipients = guild.members.map(m => m.userId).filter(id => id !== userId);
@@ -1564,8 +1563,8 @@ export class ChannelsService {
 
     const guild = await this.guildsRepository.findOne({ where: { id: channel.guildId }, relations: ['members'] })
 
-    const channelDTO = mapper.map(channel, Channel, ChannelResponseDTO);
-    channelDTO.permissionOverwrites = channel.permissionOverwrites.map(ow => mapper.map(ow, PermissionOverwrite, PermissionOverwriteResponseDTO));
+    const channelDTO = toChannelResponseDTO(channel);
+    channelDTO.permissionOverwrites = channel.permissionOverwrites.map(toPermissionOverwriteResponseDTO);
 
     const recipients = guild.members.map(m => m.userId).filter(id => id !== userId);
 
@@ -1806,20 +1805,5 @@ export class ChannelsService {
   onModuleInit() {
     this.usersService = this.usersGRPCClient.getService<UserProfilesService>('UserProfilesService');
     this.messagesService = this.messagesGRPCClient.getService<MessagesService>('MessagesService');
-
-    createMap(mapper, CreateDMChannelDTO, Channel);
-    createMap(mapper, CreateChannelDTO, Channel);
-    createMap(mapper, Channel, ChannelResponseDTO);
-    createMap(mapper, UserChannelState, UserChannelStateResponseDTO);
-    createMap(mapper, PermissionOverwrite, PermissionOverwriteResponseDTO,
-      forMember(
-        dest => dest.allow,
-        mapFrom(src => src.allow.toString())
-      ),
-      forMember(
-        dest => dest.deny,
-        mapFrom(src => src.deny.toString())
-      )
-    );
   }
 }
