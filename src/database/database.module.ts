@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { TypeOrmModule } from "@nestjs/typeorm";
+import { getDbSslConfig } from "./ssl.config";
 
 @Module({
     imports: [
@@ -12,9 +13,7 @@ import { TypeOrmModule } from "@nestjs/typeorm";
                     username: process.env.DB_USER,
                     password: process.env.DB_PASSWORD,
                     database: process.env.DB_NAME,
-                    ssl: process.env.NODE_ENV === "development"
-                        ? { rejectUnauthorized: false }
-                        : undefined,
+                    ssl: getDbSslConfig(),
                     entities: [
                         __dirname + '/../**/*.entity{.ts,.js}'
                     ],
