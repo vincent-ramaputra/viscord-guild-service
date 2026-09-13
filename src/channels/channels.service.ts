@@ -1152,7 +1152,7 @@ export class ChannelsService {
     let unreadCount = 0;
     if (unreadCountRaw === null) {
       if (state) {
-        const response = await firstValueFrom(this.messagesService.getUnreadCount({ channelId: channelId, lastMessageId: state.lastReadId }));
+        const response = await firstValueFrom(this.messagesService.getUnreadCount({ channelId: channelId, lastReadId: state.lastReadId }));
         if (response.status === HttpStatus.OK) {
           unreadCount = response.data;
           await redisClient.set(key, unreadCount);

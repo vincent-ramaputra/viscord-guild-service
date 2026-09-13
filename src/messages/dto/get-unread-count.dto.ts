@@ -1,5 +1,5 @@
 
 export class GetUnreadCountDTO {
     channelId: string;
-    lastMessageId: string;
+    lastReadId: string;
 }
