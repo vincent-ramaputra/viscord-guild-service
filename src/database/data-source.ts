@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { DataSource, DataSourceOptions } from 'typeorm';
+import { getDbSslConfig } from './ssl.config';
 
 export const dataSourceOptions: DataSourceOptions = {
     type: 'postgres',
@@ -8,9 +9,7 @@ export const dataSourceOptions: DataSourceOptions = {
     username: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
     database: process.env.DB_NAME,
-    ssl: process.env.NODE_ENV === 'development'
-        ? { rejectUnauthorized: false }
-        : undefined,
+    ssl: getDbSslConfig(),
     entities: [__dirname + '/../**/*.entity{.ts,.js}'],
     migrations: [__dirname + '/migrations/*{.ts,.js}'],
     synchronize: false,
