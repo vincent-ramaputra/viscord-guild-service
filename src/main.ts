@@ -17,7 +17,10 @@ const _pino = pino({
 });
 const bootstrapLogger: LoggerService = {
   log: (msg: string, ctx?: string) => _pino.info({ context: ctx }, msg),
-  error: (msg: string, trace?: string, ctx?: string) => _pino.error({ context: ctx, trace }, msg),
+  error: (msg: unknown, trace?: string, ctx?: string) =>
+    msg instanceof Error
+      ? _pino.error({ context: ctx, err: msg }, msg.message)
+      : _pino.error({ context: ctx, trace }, String(msg)),
   warn: (msg: string, ctx?: string) => _pino.warn({ context: ctx }, msg),
   debug: (msg: string, ctx?: string) => _pino.debug({ context: ctx }, msg),
   verbose: (msg: string, ctx?: string) => _pino.trace({ context: ctx }, msg),
