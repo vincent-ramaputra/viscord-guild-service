@@ -3,17 +3,15 @@ import { CreateChannelDTO } from './dto/create-channel.dto';
 import { CreateDMChannelDTO } from "./dto/create-dm-channel.dto";
 import { Result } from "src/interfaces/result.interface";
 import { ChannelResponseDTO } from "./dto/channel-response.dto";
-import { HttpService } from "@nestjs/axios";
-import { AxiosResponse } from "axios";
-import { every, firstValueFrom } from "rxjs";
-import { In, Not, Repository } from "typeorm";
+import { firstValueFrom } from "rxjs";
+import { In, Repository } from "typeorm";
 import { Channel } from "./entities/channel.entity";
 import { InjectRepository } from "@nestjs/typeorm";
 import { ChannelRecipient } from "./entities/channel-recipient.entity";
 import { toChannelEntityFromCreateDMDTO, toChannelEntityFromCreateDTO, toChannelResponseDTO, toPermissionOverwriteResponseDTO, toUserChannelStateResponseDTO } from "src/mappings/mappers";
 import { ChannelType } from "./enums/channel-type.enum";
 import { UserProfileResponseDTO } from "src/user-profiles/dto/user-profile-response.dto";
-import { ClientGrpc, ClientProxy, ClientProxyFactory, GrpcMethod, RpcException, Transport } from "@nestjs/microservices";
+import { Client, ClientGrpc, ClientProxy, ClientProxyFactory, GrpcMethod, RpcException, Transport } from "@nestjs/microservices";
 import { CREATE_CONSUMER, CREATE_PRODUCER, CREATE_RTC_ANSWER, CREATE_RTC_OFFER, CREATE_TRANSPORT, GATEWAY_QUEUE, GET_VOICE_RINGS_EVENT, GET_VOICE_STATES_EVENT, GUILD_UPDATE_EVENT, MESSAGE_RECEIVED_EVENT, PRODUCER_CREATED, USER_TYPING_EVENT, VOICE_RING_DISMISS_EVENT, VOICE_RING_EVENT, VOICE_UPDATE_EVENT } from "src/constants/events";
 import { Payload } from "src/interfaces/payload.dto";
 import { UserTypingDTO } from "src/channels/dto/user-typing.dto";
@@ -31,11 +29,9 @@ import { Guild } from "src/guilds/entities/guild.entity";
 import { UserProfilesService } from "src/user-profiles/grpc/user-profiles.service";
 import { InviteResponseDTO } from "src/invites/dto/invite-response.dto";
 import { InvitesService } from "src/invites/invites.service";
-import { CreateInviteDto } from "src/invites/dto/create-invite.dto";
 import { UpdateChannelDTO } from "./dto/update-channel.dto";
 import { UserChannelStateResponseDTO } from "./dto/user-channel-state-response.dto";
 import { MessagesService } from "src/messages/messages.service";
-import { MessageCreatedDTO } from "./dto/message-created.dto";
 import { GuildUpdateDTO } from "src/guilds/dto/guild-update.dto";
 import { GuildUpdateType } from "src/guilds/enums/guild-update-type.enum";
 import { PermissionOverwrite } from "./entities/permission-overwrite.entity";
@@ -43,7 +39,7 @@ import { PermissionOverwriteResponseDTO } from "./dto/permission-overwrite-respo
 import { GuildsService } from "src/guilds/guilds.service";
 import { allowPermission, applyChannelOverwrites, denyPermission, hasPermission, toBit } from "./helpers/permission.helper";
 import { PermissionOverwriteTargetType } from "./enums/permission-overwrite-target-type.enum";
-import { ALL_PERMISSIONS, Permissions } from "../guilds/enums/permissions.enum";
+import { Permissions } from "../guilds/enums/permissions.enum";
 import { UpdateChannelPermissionOverwriteDTO } from "./dto/update-channel-permission.dto";
 import { GuildMember } from "src/guilds/entities/guild-members.entity";
 import { MessageResponseDTO } from "src/messages/dto/message-response.dto";
@@ -55,7 +51,6 @@ import { CheckPermissionDTO } from "./dto/check-permission.dto";
 @Injectable()
 export class ChannelsService {
   private readonly logger = new Logger(ChannelsService.name);
-  private gatewayMQ: ClientProxy;
   private usersService: UserProfilesService;
   private messagesService: MessagesService;
 
@@ -70,15 +65,8 @@ export class ChannelsService {
     @Inject(forwardRef(() => GuildsService)) private readonly guildsService: GuildsService,
     @Inject('USERS_SERVICE') private usersGRPCClient: ClientGrpc,
     @Inject('MESSAGES_SERVICE') private messagesGRPCClient: ClientGrpc,
+    @Inject('GATEWAY_MQ') private readonly gatewayMQ: ClientProxy
   ) {
-    this.gatewayMQ = ClientProxyFactory.create({
-      transport: Transport.RMQ,
-      options: {
-        urls: [`amqp://${process.env.RMQ_HOST}:${process.env.RMQ_PORT}`],
-        queue: GATEWAY_QUEUE,
-        queueOptions: { durable: true }
-      }
-    });
   }
 
   async create(userId: string, dto: CreateChannelDTO): Promise<Result<ChannelResponseDTO>> {

@@ -10,8 +10,6 @@ import { GuildResponseDTO } from "./dto/guild-response.dto";
 import { StorageService } from "src/storage/storage.service";
 import { ChannelsService } from "src/channels/channels.service";
 import { ChannelType } from "src/channels/enums/channel-type.enum";
-import { ChannelResponseDTO } from "src/channels/dto/channel-response.dto";
-import { Channel } from "src/channels/entities/channel.entity";
 import { firstValueFrom } from "rxjs";
 import { UserProfileResponseDTO } from "src/user-profiles/dto/user-profile-response.dto";
 import { UserProfilesService } from "src/user-profiles/grpc/user-profiles.service";
@@ -27,11 +25,7 @@ import { allowPermission } from "src/channels/helpers/permission.helper";
 import { UpdateRoleDTO } from "./dto/update-role.dto";
 import { AssignRoleDTO } from "./dto/assign-role.dto";
 import { GuildMemberResponseDTO } from "./dto/guild-member-response.dto";
-import { stat } from "fs";
 import { CheckPermissionDTO } from "../channels/dto/check-permission.dto";
-import { deadlineToString } from "@grpc/grpc-js/build/src/deadline";
-import { PermissionOverwrite } from "src/channels/entities/permission-overwrite.entity";
-import { PermissionOverwriteResponseDTO } from "src/channels/dto/permission-overwrite-response.dto";
 import { UpdateMemberDTO } from "./dto/update-member.dto";
 import { UpdateGuildDTO } from "./dto/update-guild.dto";
 import { InvitesService } from "src/invites/invites.service";
@@ -42,7 +36,6 @@ import { DeleteRoleDTO } from "./dto/delete-role.dto";
 export class GuildsService {
   private readonly logger = new Logger(GuildsService.name);
   private usersServiceGrpc: UserProfilesService;
-  private gatewayMQ: ClientProxy;
   constructor(
     @InjectRepository(Guild) private readonly guildsRepository: Repository<Guild>,
     @InjectRepository(GuildMember) private readonly guildMembersRepository: Repository<GuildMember>,
@@ -50,17 +43,9 @@ export class GuildsService {
     @Inject(forwardRef(() => ChannelsService)) private readonly channelsService: ChannelsService,
     @Inject(forwardRef(() => InvitesService)) private readonly invitesService: InvitesService,
     private readonly storageService: StorageService,
-    @Inject('USERS_SERVICE') private usersGRPCClient: ClientGrpc
-  ) {
-    this.gatewayMQ = ClientProxyFactory.create({
-      transport: Transport.RMQ,
-      options: {
-        urls: [`amqp://${process.env.RMQ_HOST}:${process.env.RMQ_PORT}`],
-        queue: GATEWAY_QUEUE,
-        queueOptions: { durable: true }
-      }
-    });
-  }
+    @Inject('USERS_SERVICE') private usersGRPCClient: ClientGrpc,
+    @Inject('GATEWAY_MQ') private readonly gatewayMQ: ClientProxy
+  ) { }
 
   /**
    * Builds the full, client-facing guild icon URL from the stored value.

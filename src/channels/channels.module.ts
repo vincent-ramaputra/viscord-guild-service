@@ -13,11 +13,40 @@ import { InvitesModule } from "src/invites/invites.module";
 import { Role } from "src/roles/entities/role.entity";
 import { GuildsModule } from "src/guilds/guilds.module";
 import { PermissionOverwrite } from "./entities/permission-overwrite.entity";
+import { ClientsModule, Transport } from '@nestjs/microservices';
+import { ConfigService } from '@nestjs/config';
+import { GATEWAY_QUEUE } from 'src/constants/events';
 
 @Module({
   controllers: [GuildChannelsController, DMChannelsController, ChannelsController],
   providers: [ChannelsService],
-  imports: [HttpModule, RedisModule, TypeOrmModule.forFeature([Channel, ChannelRecipient, UserChannelState, Guild, Role, PermissionOverwrite]), GrpcClientModule, InvitesModule, forwardRef(() => GuildsModule)],
+  imports: [
+    HttpModule,
+    RedisModule,
+    TypeOrmModule.forFeature([Channel, ChannelRecipient, UserChannelState, Guild, Role, PermissionOverwrite]), GrpcClientModule, InvitesModule, forwardRef(() => GuildsModule),
+    ClientsModule.registerAsync({
+      clients: [
+        {
+          name: 'GATEWAY_MQ',
+          inject: [ConfigService],
+          useFactory: (configService: ConfigService) => {
+            return {
+              transport: Transport.RMQ,
+              options: {
+                urls: [
+                  `amqp://${configService.get('RMQ_HOST')}:${configService.get('RMQ_PORT')}`,
+                ],
+                queue: GATEWAY_QUEUE,
+                queueOptions: { durable: true },
+                persistent: true,
+              },
+            };
+          },
+        },
+      ],
+    }),
+  ],
+
   exports: [ChannelsService]
 })
-export class ChannelsModule {}
+export class ChannelsModule { }
