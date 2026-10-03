@@ -11,8 +11,8 @@ import { ChannelRecipient } from "./entities/channel-recipient.entity";
 import { toChannelEntityFromCreateDMDTO, toChannelEntityFromCreateDTO, toChannelResponseDTO, toPermissionOverwriteResponseDTO, toUserChannelStateResponseDTO } from "src/mappings/mappers";
 import { ChannelType } from "./enums/channel-type.enum";
 import { UserProfileResponseDTO } from "src/user-profiles/dto/user-profile-response.dto";
-import { Client, ClientGrpc, ClientProxy, ClientProxyFactory, GrpcMethod, RpcException, Transport } from "@nestjs/microservices";
-import { CREATE_CONSUMER, CREATE_PRODUCER, CREATE_RTC_ANSWER, CREATE_RTC_OFFER, CREATE_TRANSPORT, GATEWAY_QUEUE, GET_VOICE_RINGS_EVENT, GET_VOICE_STATES_EVENT, GUILD_UPDATE_EVENT, MESSAGE_RECEIVED_EVENT, PRODUCER_CREATED, USER_TYPING_EVENT, VOICE_RING_DISMISS_EVENT, VOICE_RING_EVENT, VOICE_UPDATE_EVENT } from "src/constants/events";
+import { ClientGrpc, ClientProxy, RpcException } from "@nestjs/microservices";
+import { GET_VOICE_RINGS_EVENT, GET_VOICE_STATES_EVENT, GUILD_UPDATE_EVENT, MESSAGE_RECEIVED_EVENT, PRODUCER_CREATED, USER_TYPING_EVENT, VOICE_RING_DISMISS_EVENT, VOICE_RING_EVENT, VOICE_UPDATE_EVENT } from "src/constants/events";
 import { Payload } from "src/interfaces/payload.dto";
 import { UserTypingDTO } from "src/channels/dto/user-typing.dto";
 import { UserChannelState } from "./entities/user-channel-state.entity";
@@ -47,15 +47,21 @@ import { CanUserDeleteMessageRequest } from "./dto/can-user-delete-message.dto";
 import { CanUserDeleteMessageResponse } from "./dto/can-user-delete-message.response.dto";
 import { CheckPermissionResponseDTO } from "src/channels/dto/check-permission-response.dto";
 import { CheckPermissionDTO } from "./dto/check-permission.dto";
+import { CreateVoiceTicketResponseDTO } from './dto/create-voice-ticket-response.dto';
+import { VoiceTicketService } from './voice-ticket.service';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class ChannelsService {
   private readonly logger = new Logger(ChannelsService.name);
   private usersService: UserProfilesService;
   private messagesService: MessagesService;
+  private readonly sfuPublicUrl: string;
 
   constructor(
     private readonly redisService: RedisService,
+    private readonly voiceTicketService: VoiceTicketService,
+    private readonly config: ConfigService,
     @InjectRepository(Guild) private readonly guildsRepository: Repository<Guild>,
     @InjectRepository(Channel) private readonly channelsRepository: Repository<Channel>,
     @InjectRepository(ChannelRecipient) private readonly channelRecipientsRepository: Repository<ChannelRecipient>,
@@ -67,6 +73,7 @@ export class ChannelsService {
     @Inject('MESSAGES_SERVICE') private messagesGRPCClient: ClientGrpc,
     @Inject('GATEWAY_MQ') private readonly gatewayMQ: ClientProxy
   ) {
+    this.sfuPublicUrl = this.config.getOrThrow<string>('SFU_PUBLIC_URL');
   }
 
   async create(userId: string, dto: CreateChannelDTO): Promise<Result<ChannelResponseDTO>> {
@@ -758,6 +765,79 @@ export class ChannelsService {
       data: null,
       message: 'Ringing dismissed successfully'
     };
+  }
+
+  async createVoiceTicket(userId: string, channelId: string): Promise<Result<CreateVoiceTicketResponseDTO>> {
+    if (!userId || userId.length === 0) {
+      return {
+        status: HttpStatus.UNAUTHORIZED,
+        message: "Unauthorized",
+        data: null
+      };
+    }
+
+    if (!channelId || channelId.length === 0) {
+      return {
+        status: HttpStatus.BAD_REQUEST,
+        message: "Invalid channel ID",
+        data: null
+      };
+    }
+
+    const channel: Channel = await this.channelsRepository.findOneBy({ id: channelId });
+    if (!channel) {
+      return {
+        status: HttpStatus.NOT_FOUND,
+        data: null,
+        message: 'Channel not found'
+      };
+    }
+
+    const recipients = await this.getChannelRecipients(channelId);
+    if (!recipients.find(id => id === userId)) {
+      return {
+        status: HttpStatus.NOT_FOUND,
+        data: null,
+        message: 'Channel not found'
+      };
+    }
+
+    if (channel.type !== ChannelType.Voice && channel.type !== ChannelType.DM) {
+      return {
+        status: HttpStatus.BAD_REQUEST,
+        message: 'Not a voice channel',
+        data: null
+      };
+    }
+    if (channel.guildId) {
+      const effective = await this.getEffectivePermission({ userId, guildId: channel.guildId, channelId });
+      if (!hasPermission(effective, Permissions.VIEW_CHANNELS)) {
+        return {
+          status: HttpStatus.FORBIDDEN,
+          data: null,
+          message: 'You dont have the permission to join this voice channel'
+        };
+      }
+    }
+
+    try {
+      const ticket = await this.voiceTicketService.sign(userId, channelId);
+      return {
+        status: HttpStatus.OK,
+        message: 'Voice ticket created successfully',
+        data: {
+          ticket,
+          sfuUrl: this.sfuPublicUrl
+        }
+      };
+    } catch (error) {
+      this.logger.error({ err: error }, 'Failed creating voice ticket');
+      return {
+        status: HttpStatus.INTERNAL_SERVER_ERROR,
+        message: 'An unknown error occurred while creating voice ticket',
+        data: null
+      };
+    }
   }
 
 

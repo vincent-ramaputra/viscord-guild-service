@@ -207,6 +207,19 @@ export class ChannelsController {
     return res.status(status).json(result);
   }
 
+  @Post(':channelId/voice-ticket')
+  async createVoiceTicket(
+    @Headers('X-User-Id') userId: string,
+    @Res() res: Response,
+    @Param('channelId') channelId: string
+  ) {
+    const result = await this.channelsService.createVoiceTicket(userId, channelId);
+    const { status } = result;
+
+    return res.status(status).json(result);
+
+  }
+
   @MessagePattern(VOICE_UPDATE_EVENT)
   async voiceUpdate(@Body(new ValidationPipe({ transform: true })) dto: VoiceEventDTO) {
     switch (dto.type) {
@@ -248,7 +261,7 @@ export class ChannelsController {
   }
 
   @GrpcMethod('ChannelsService', 'CanUserSendMessage')
-  async canUserSendMessage({userId, channelId}: {userId: string, channelId: string}) {
+  async canUserSendMessage({ userId, channelId }: { userId: string, channelId: string }) {
     return await this.channelsService.canUserSendMessage(userId, channelId);
   }
 
