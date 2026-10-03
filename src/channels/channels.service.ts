@@ -49,16 +49,19 @@ import { CheckPermissionResponseDTO } from "src/channels/dto/check-permission-re
 import { CheckPermissionDTO } from "./dto/check-permission.dto";
 import { CreateVoiceTicketResponseDTO } from './dto/create-voice-ticket-response.dto';
 import { VoiceTicketService } from './voice-ticket.service';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class ChannelsService {
   private readonly logger = new Logger(ChannelsService.name);
   private usersService: UserProfilesService;
   private messagesService: MessagesService;
+  private readonly sfuPublicUrl: string;
 
   constructor(
     private readonly redisService: RedisService,
     private readonly voiceTicketService: VoiceTicketService,
+    private readonly config: ConfigService,
     @InjectRepository(Guild) private readonly guildsRepository: Repository<Guild>,
     @InjectRepository(Channel) private readonly channelsRepository: Repository<Channel>,
     @InjectRepository(ChannelRecipient) private readonly channelRecipientsRepository: Repository<ChannelRecipient>,
@@ -70,6 +73,7 @@ export class ChannelsService {
     @Inject('MESSAGES_SERVICE') private messagesGRPCClient: ClientGrpc,
     @Inject('GATEWAY_MQ') private readonly gatewayMQ: ClientProxy
   ) {
+    this.sfuPublicUrl = this.config.getOrThrow<string>('SFU_PUBLIC_URL');
   }
 
   async create(userId: string, dto: CreateChannelDTO): Promise<Result<ChannelResponseDTO>> {
@@ -821,7 +825,10 @@ export class ChannelsService {
       return {
         status: HttpStatus.OK,
         message: 'Voice ticket created successfully',
-        data: { ticket }
+        data: {
+          ticket,
+          sfuUrl: this.sfuPublicUrl
+        }
       };
     } catch (error) {
       this.logger.error({ err: error }, 'Failed creating voice ticket');
