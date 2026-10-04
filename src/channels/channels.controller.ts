@@ -5,22 +5,18 @@ import { CreateDMChannelDTO } from "./dto/create-dm-channel.dto";
 import { Response } from "express";
 import { GrpcMethod, MessagePattern } from "@nestjs/microservices";
 import { AcknowledgeMessageDTO } from "./dto/acknowledge-message.dto";
-import { CREATE_PRODUCER, CREATE_RTC_ANSWER, CREATE_RTC_OFFER, CREATE_TRANSPORT, GET_VOICE_RINGS_EVENT, GET_VOICE_STATES_EVENT, MESSAGE_CREATED, PRODUCER_CREATED, VOICE_UPDATE_EVENT } from "src/constants/events";
+import { GET_VOICE_RINGS_EVENT, GET_VOICE_STATES_EVENT, MESSAGE_CREATED, VOICE_UPDATE_EVENT } from "src/constants/events";
 import { VoiceEventDTO } from "./dto/voice-event.dto";
-import { RedisService } from "src/redis/redis.service";
 import { VoiceEventType } from "./enums/voice-event-type";
-import { RTCOfferDTO } from "./dto/rtc-offer.dto";
-import { ProducerCreatedDTO } from "./dto/producer-created.dto";
 import { GetDMChannelsDTO } from "./dto/get-dm-channels.dto";
 import { CreateInviteDto } from "src/invites/dto/create-invite.dto";
 import { UpdateChannelDTO } from "./dto/update-channel.dto";
-import { MessageCreatedDTO } from "./dto/message-created.dto";
 import { UpdateChannelPermissionOverwriteDTO } from "./dto/update-channel-permission.dto";
 import { MessageResponseDTO } from "src/messages/dto/message-response.dto";
 import { InvitesService } from "src/invites/invites.service";
-import { channel } from "diagnostics_channel";
 import { CanUserDeleteMessageRequest } from "./dto/can-user-delete-message.dto";
 import { CheckPermissionDTO } from "./dto/check-permission.dto";
+import { VoicePresenceService } from './voice-presence.service';
 
 @Controller('guilds/:guildId/channels')
 export class GuildChannelsController {
@@ -96,7 +92,8 @@ export class DMChannelsController {
 @Controller('channels')
 export class ChannelsController {
   constructor(private readonly channelsService: ChannelsService,
-    private readonly invitesService: InvitesService
+    private readonly invitesService: InvitesService,
+    private readonly voicePresenceService: VoicePresenceService
   ) { }
 
   @Get(':channelId')
@@ -225,13 +222,13 @@ export class ChannelsController {
     switch (dto.type) {
       case VoiceEventType.VOICE_JOIN:
       case VoiceEventType.VOICE_LEAVE: break;
-      case VoiceEventType.STATE_UPDATE: await this.channelsService.handleVoiceStateUpdate(dto); break;
+      case VoiceEventType.STATE_UPDATE: await this.voicePresenceService.handleVoiceStateUpdate(dto); break;
     }
   }
 
   @MessagePattern(GET_VOICE_STATES_EVENT)
   async getVoiceStates(@Body(new ValidationPipe({ transform: true })) userId: string) {
-    await this.channelsService.handleGetVoiceStates(userId);
+    await this.voicePresenceService.handleGetVoiceStates(userId);
   }
 
   @MessagePattern(GET_VOICE_RINGS_EVENT)
