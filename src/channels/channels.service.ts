@@ -54,6 +54,7 @@ import { PeerJoinedEventDTO } from './dto/peer-joined-event.dto';
 import { PEER_JOINED_SCRIPT } from './redis-scripts/peer-joined.script';
 import { PeerLeftEventDTO } from './dto/peer-left-event.dto';
 import { PEER_LEFT_SCRIPT } from './redis-scripts/peer-left.script';
+import { VOICE_STATE_UPDATE_SCRIPT } from './redis-scripts/voice-state-update.script';
 
 @Injectable()
 export class ChannelsService {
@@ -904,45 +905,30 @@ export class ChannelsService {
   }
 
   async handleVoiceStateUpdate(dto: VoiceEventDTO) {
-    const client = await this.redisService.getClient();
-    const key = this.getVoiceStateKey(dto.channelId, dto.userId);
-    const rawState = await client.get(key);
-    if (typeof (rawState) !== 'string') return;
-    const oldState: VoiceState = JSON.parse(rawState);
-    const newState: VoiceState = {
-      ...oldState,
-      ...dto.data
-    };
+    const { isMuted, isDeafened } = dto.data ?? {};
+    const valid = (v: unknown) => v === undefined || typeof v === 'boolean';
+    if (!valid(isMuted) || !valid(isDeafened)) return;
 
-    await client.set(key, JSON.stringify(newState));
+    const redis = await this.redisService.getClient();
+    const [outcome, rawState] = await redis.eval(VOICE_STATE_UPDATE_SCRIPT, {
+      keys: [this.getVoiceStateKey(dto.channelId, dto.userId)],
+      arguments: [
+        isMuted === undefined ? '' : String(isMuted),
+        isDeafened === undefined ? '' : String(isDeafened),
+      ]
+    }) as [string, string?];
 
-    let channel = await this.channelsRepository
-      .createQueryBuilder('channel')
-      .innerJoinAndSelect('channel.recipients', 'channel_recipient')
-      .where('channel.id = :channelId', { channelId: dto.channelId })
-      .getOne();
-    if (!channel) {
-      return {
-        status: HttpStatus.BAD_REQUEST,
-        data: null,
-        message: 'Channel not found'
-      };
-    }
+    if (outcome !== 'updated') return;
 
-    if (!channel.recipients.find(r => r.userId === dto.userId)) {
-      return {
-        status: HttpStatus.FORBIDDEN,
-        data: null,
-        message: 'Channel not found'
-      };
-    }
-    const recipients = channel.recipients.map(r => r.userId);
+    const state: VoiceState = JSON.parse(rawState);
+
+    const recipients = await this.getChannelRecipients(dto.channelId);
 
     const payload: VoiceEventDTO = {
       channelId: dto.channelId,
       userId: dto.userId,
       type: VoiceEventType.STATE_UPDATE,
-      data: newState
+      data: this.toVoiceStateDTO(state)
     }
 
     this.gatewayMQ.emit(VOICE_UPDATE_EVENT, { recipients: recipients, data: payload } as Payload<VoiceEventDTO>)
@@ -1012,6 +998,15 @@ export class ChannelsService {
 
   //   return inviteResponse;
   // }
+
+  private toVoiceStateDTO(state: VoiceState): VoiceStateDTO {
+    return {
+      channelId: state.channelId,
+      userId: state.userId,
+      isDeafened: state.isDeafened,
+      isMuted: state.isMuted
+    };
+  }
 
   async getChannelInvites(userId: string, channelId: string): Promise<Result<InviteResponseDTO[]>> {
     const channel = await this.channelsRepository.findOne({ where: { id: channelId } });
