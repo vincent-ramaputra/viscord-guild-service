@@ -223,8 +223,8 @@ export class ChannelsController {
   @MessagePattern(VOICE_UPDATE_EVENT)
   async voiceUpdate(@Body(new ValidationPipe({ transform: true })) dto: VoiceEventDTO) {
     switch (dto.type) {
-      case VoiceEventType.VOICE_JOIN: await this.channelsService.handleVoiceJoin(dto); break;
-      case VoiceEventType.VOICE_LEAVE: await this.channelsService.handleVoiceLeave(dto); break;
+      case VoiceEventType.VOICE_JOIN:
+      case VoiceEventType.VOICE_LEAVE: break;
       case VoiceEventType.STATE_UPDATE: await this.channelsService.handleVoiceStateUpdate(dto); break;
     }
   }

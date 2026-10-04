@@ -23,7 +23,7 @@ import { VoiceState } from "./entities/voice-state";
 import { VoiceEventType } from "./enums/voice-event-type";
 import { VoiceStateDTO } from "./dto/voice-state.dto";
 import { VoiceRingState } from "./entities/voice-ring-state";
-import { VOICE_RING_TIMEOUT } from "src/constants/time";
+import { VOICE_GRACE_MS, VOICE_RING_TIMEOUT } from "src/constants/time";
 import { VoiceRingStateDTO } from "./dto/voice-ring-state.dto";
 import { Guild } from "src/guilds/entities/guild.entity";
 import { UserProfilesService } from "src/user-profiles/grpc/user-profiles.service";
@@ -52,6 +52,8 @@ import { VoiceTicketService } from './voice-ticket.service';
 import { ConfigService } from '@nestjs/config';
 import { PeerJoinedEventDTO } from './dto/peer-joined-event.dto';
 import { PEER_JOINED_SCRIPT } from './redis-scripts/peer-joined.script';
+import { PeerLeftEventDTO } from './dto/peer-left-event.dto';
+import { PEER_LEFT_SCRIPT } from './redis-scripts/peer-left.script';
 
 @Injectable()
 export class ChannelsService {
@@ -840,94 +842,6 @@ export class ChannelsService {
         data: null
       };
     }
-  }
-
-
-  async handleVoiceJoin(dto: VoiceEventDTO) {
-    //   const channel: Channel = await this.channelsRepository
-    //     .createQueryBuilder('channel')
-    //     .where('channel.id = :channelId', { channelId: dto.channelId })
-    //     .getOne();
-
-    //   if (!channel) {
-    //     return {
-    //       status: HttpStatus.BAD_REQUEST,
-    //       data: null,
-    //       message: 'Channel not found'
-    //     };
-    //   }
-
-    //   const recipients: string[] = await this.getChannelRecipients(channel.id)
-
-    //   if (!recipients.find(id => id === dto.userId)) {
-    //     return {
-    //       status: HttpStatus.FORBIDDEN,
-    //       data: null,
-    //       message: 'Channel not found'
-    //     };
-    //   }
-
-    //   const client = await this.redisService.getClient();
-    //   const state: VoiceState = { channelId: dto.channelId, userId: dto.userId, isDeafened: dto.data.isDeafened, isMuted: dto.data.isMuted };
-    //   await client.set(this.getVoiceStateKey(dto.channelId, dto.userId), JSON.stringify(state));
-    //   await client.sAdd(this.getVoiceChannelKey(dto.channelId), dto.userId);
-    //   await this.handleDismissVoiceRing(dto.userId, dto.channelId);
-
-    //   const payload: VoiceEventDTO = {
-    //     channelId: state.channelId,
-    //     userId: state.userId,
-    //     type: VoiceEventType.VOICE_JOIN,
-    //     data: state as VoiceStateDTO
-    //   };
-
-    //   this.gatewayMQ.emit(VOICE_UPDATE_EVENT, { recipients: recipients, data: payload } as Payload<VoiceEventDTO>);
-    }
-
-    async handleVoiceLeave(dto: VoiceEventDTO) {
-      let channel = await this.channelsRepository
-        .createQueryBuilder('channel')
-        .where('channel.id = :channelId', { channelId: dto.channelId })
-        .getOne();
-      if (!channel) {
-        return {
-          status: HttpStatus.BAD_REQUEST,
-          data: null,
-          message: 'Channel not found'
-        };
-      }
-
-      const recipients: string[] = await this.getChannelRecipients(channel.id);
-
-      if (!recipients.find(id => id === dto.userId)) {
-        return {
-          status: HttpStatus.FORBIDDEN,
-          data: null,
-          message: 'Channel not found'
-        };
-      }
-
-      const client = await this.redisService.getClient();
-      await client.del(this.getVoiceStateKey(dto.channelId, dto.userId));
-      await client.sRem(this.getVoiceChannelKey(dto.channelId), dto.userId);
-
-      const voiceStatesMember = await client.sMembers(this.getVoiceChannelKey(dto.channelId))
-
-      if (voiceStatesMember.length === 0) {
-        await this.clearChannelVoiceRings(dto.channelId);
-      }
-
-      const payload: VoiceEventDTO = {
-        channelId: dto.channelId,
-        userId: dto.userId,
-        type: VoiceEventType.VOICE_LEAVE,
-        data: {
-          channelId: dto.channelId,
-          userId: dto.userId
-        } as VoiceStateDTO
-
-      };
-
-      this.gatewayMQ.emit(VOICE_UPDATE_EVENT, { recipients: recipients, data: payload } as Payload<VoiceEventDTO>);
   }
 
   async handleGetVoiceStates(userId: string) {
@@ -1915,7 +1829,66 @@ export class ChannelsService {
     };
 
     this.gatewayMQ.emit(VOICE_UPDATE_EVENT, { recipients: recipients, data: payload } as Payload<VoiceEventDTO>);
+  }
 
+  async handlePeerLeft(dto: PeerLeftEventDTO) {
+    const [outcome, remaining] = await this.runPeerLeftScript(dto, dto.reason);
+
+    if (outcome === 'marked') await this.scheduleLeaveCheck(dto);
+    if (outcome === 'removed') await this.onVoiceRemoved(dto.channelId, dto.userId, remaining);
+  }
+
+  private async runPeerLeftScript(dto: PeerLeftEventDTO, mode: 'left' | 'dropped' | 'check'): Promise<[string, number?]> {
+    const redis = await this.redisService.getClient();
+    const [outcome, remaining] = await redis.eval(PEER_LEFT_SCRIPT, {
+      keys: [
+        this.getVoiceUserChannelKey(dto.userId),
+        this.getVoiceStateKey(dto.channelId, dto.userId),
+        this.getVoiceChannelKey(dto.channelId)
+      ],
+      arguments: [
+        dto.userId,
+        dto.channelId,
+        dto.sessionId,
+        mode
+      ]
+    }) as [string, number?];
+
+    return [outcome, remaining];
+
+  }
+
+  private async scheduleLeaveCheck(dto: PeerLeftEventDTO) {
+    setTimeout(async () => {
+      try {
+        const [outcome, remaining] = await this.runPeerLeftScript(dto, 'check');
+        if (outcome !== 'removed') return;
+
+        await this.onVoiceRemoved(dto.channelId, dto.userId, remaining);
+      } catch (error) {
+        this.logger.error({ err: error }, 'Error when checking after grace period');
+      }
+    }, VOICE_GRACE_MS);
+  }
+
+  private async onVoiceRemoved(channelId: string, userId: string, remaining: number) {
+    const recipients = await this.getChannelRecipients(channelId);
+
+    if (remaining === 0) {
+      await this.clearChannelVoiceRings(channelId);
+    }
+
+    const payload: VoiceEventDTO = {
+      channelId: channelId,
+      userId: userId,
+      type: VoiceEventType.VOICE_LEAVE,
+      data: {
+        channelId,
+        userId,
+      } as VoiceStateDTO
+    };
+
+    this.gatewayMQ.emit(VOICE_UPDATE_EVENT, { recipients: recipients, data: payload } as Payload<VoiceEventDTO>);
   }
 
   private getVoiceChannelKey(channelId: string) {

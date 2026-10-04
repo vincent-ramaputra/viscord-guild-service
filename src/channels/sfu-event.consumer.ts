@@ -66,8 +66,14 @@ export class SfuEventConsumer implements OnModuleInit, OnModuleDestroy {
                     const data = await this.validateOrDrop(PeerLeftEventDTO, payload.data, msg);
                     if (!data) return;
 
-                    this.logger.log({ event: data }, 'peer_left message handled')
-                    this.channelWrapper.ack(msg);
+                    try {
+                        await this.channelsService.handlePeerLeft(data);
+                        this.logger.log({ event: data }, 'peer_left message handled')
+                        this.channelWrapper.ack(msg);
+                    } catch (error) {
+                        this.logger.error({ err: error }, 'Failed updating peer voice data');
+                        setTimeout(() => this.channelWrapper.nack(msg, false, true), 1000);
+                    }
                     break;
                 }
                 default: {
