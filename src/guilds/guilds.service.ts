@@ -31,6 +31,8 @@ import { UpdateGuildDTO } from "./dto/update-guild.dto";
 import { InvitesService } from "src/invites/invites.service";
 import { InviteResponseDTO } from "src/invites/dto/invite-response.dto";
 import { DeleteRoleDTO } from "./dto/delete-role.dto";
+import { Channel } from "src/channels/entities/channel.entity";
+import { ChannelResponseDTO } from "src/channels/dto/channel-response.dto";
 
 @Injectable()
 export class GuildsService {
@@ -148,6 +150,23 @@ export class GuildsService {
 
   }
 
+  /**
+   * Builds the client-facing channel list for a guild, including each channel's
+   * permission overwrites and the requesting user's read state. Shared by
+   * `findAll` and `findOne` so the two responses can't drift apart again.
+   * Callers must load `channel.permissionOverwrites`; it is mapped without `?.`
+   * so a missing join throws instead of silently dropping the field.
+   */
+  private async toChannelResponses(userId: string, channels: Channel[]): Promise<ChannelResponseDTO[]> {
+    return Promise.all(channels.map(async ch => {
+      const channel = toChannelResponseDTO(ch);
+      const userChannelStateResponse = await this.channelsService.getUserChannelState(userId, ch.id);
+      channel.userChannelState = userChannelStateResponse.data;
+      channel.permissionOverwrites = ch.permissionOverwrites.map(toPermissionOverwriteResponseDTO);
+      return channel;
+    }));
+  }
+
   async findAll(userId: string): Promise<Result<GuildResponseDTO[]>> {
     const guilds = await this.guildsRepository
       .createQueryBuilder('guild')
@@ -190,17 +209,7 @@ export class GuildsService {
           roles: m.roles.map(r => r.id)
         }))
 
-        data.channels = await Promise.all(
-          guild.channels.map(async (ch) => {
-            const channel = toChannelResponseDTO(ch);
-
-            const userChannelStateResponse = await this.channelsService.getUserChannelState(userId, channel.id);
-            channel.userChannelState = userChannelStateResponse.data;
-            channel.permissionOverwrites = ch.permissionOverwrites.map(toPermissionOverwriteResponseDTO)
-
-            return channel;
-          }),
-        );
+        data.channels = await this.toChannelResponses(userId, guild.channels);
 
         data.roles = guild.roles.map(toRoleResponseDTO);
         data.createdAt = guild.createdAt;
@@ -237,6 +246,7 @@ export class GuildsService {
       .leftJoinAndSelect('guild.channels', 'channel')
       .leftJoinAndSelect('guild.roles', 'role')
       .leftJoinAndSelect('channel.parent', 'parent_channel')
+      .leftJoinAndSelect('channel.permissionOverwrites', 'permission_overwrites')
       .where('guild.id = :guildId', { guildId: guildId }).getOne();
 
 
@@ -260,10 +270,7 @@ export class GuildsService {
     }))
 
 
-    data.channels = await Promise.all(guild.channels.map(async ch => {
-      const channel = toChannelResponseDTO(ch);
-      return channel;
-    }));
+    data.channels = await this.toChannelResponses(userId, guild.channels);
 
     data.roles = guild.roles.map(toRoleResponseDTO);
     data.iconURL = this.resolveIconURL(guild);
