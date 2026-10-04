@@ -10,6 +10,9 @@ import { PeerJoinedEventDTO } from "./dto/peer-joined-event.dto";
 import { PeerLeftEventDTO } from "./dto/peer-left-event.dto";
 import { ChannelsService } from "./channels.service";
 import { SfuStartedEventDTO } from "./dto/sfu-started-event.dto";
+import { SfuHeartbeatEventDTO } from "./dto/sfu-heartbeat-event.dto";
+import { SfuSnapshotEventDTO } from "./dto/sfu-snapshot-event.dto";
+import { VoicePresenceService } from "./voice-presence.service";
 
 @Injectable()
 export class SfuEventConsumer implements OnModuleInit, OnModuleDestroy {
@@ -20,7 +23,8 @@ export class SfuEventConsumer implements OnModuleInit, OnModuleDestroy {
 
     constructor(
         private readonly config: ConfigService,
-        private readonly channelsService: ChannelsService
+        private readonly channelsService: ChannelsService,
+        private readonly voicePresenceService: VoicePresenceService
     ) { }
 
     async onModuleInit() {
@@ -54,7 +58,7 @@ export class SfuEventConsumer implements OnModuleInit, OnModuleDestroy {
                     if (!data) return;
 
                     try {
-                        await this.channelsService.handlePeerJoined(data);
+                        await this.voicePresenceService.handlePeerJoined(data);
                         this.logger.log({ event: data }, 'peer_joined message handled')
                         this.channelWrapper.ack(msg);
                     } catch (error) {
@@ -68,7 +72,7 @@ export class SfuEventConsumer implements OnModuleInit, OnModuleDestroy {
                     if (!data) return;
 
                     try {
-                        await this.channelsService.handlePeerLeft(data);
+                        await this.voicePresenceService.handlePeerLeft(data);
                         this.logger.log({ event: data }, 'peer_left message handled')
                         this.channelWrapper.ack(msg);
                     } catch (error) {
@@ -82,11 +86,38 @@ export class SfuEventConsumer implements OnModuleInit, OnModuleDestroy {
                     if (!data) return;
 
                     try {
-                        await this.channelsService.handleSfuStarted(data);
+                        await this.voicePresenceService.handleSfuStarted(data);
                         this.logger.log({ event: data }, 'sfu_started message handled')
                         this.channelWrapper.ack(msg);
                     } catch (error) {
                         this.logger.error({ err: error }, 'Failed updating peer voice data');
+                        setTimeout(() => this.channelWrapper.nack(msg, false, true), 1000);
+                    }
+                    break;
+                }
+                case "sfu_heartbeat": {
+                    const data = await this.validateOrDrop(SfuHeartbeatEventDTO, payload.data, msg);
+                    if (!data) return;
+
+                    try {
+                        await this.voicePresenceService.handleSfuHeartbeat(data);
+                        this.logger.log({ event: data }, 'sfu_heartbeat message handled')
+                        this.channelWrapper.ack(msg);
+                    } catch (error) {
+                        this.logger.error({ err: error }, 'Failed updating peer voice data');
+                        setTimeout(() => this.channelWrapper.nack(msg, false, true), 1000);
+                    }
+                    break;
+                }
+                case "sfu_snapshot": {
+                    const data = await this.validateOrDrop(SfuSnapshotEventDTO, payload.data, msg);
+                    if (!data) return;
+
+                    try {
+                        await this.voicePresenceService.handleSfuSnapshot(data);
+                        this.channelWrapper.ack(msg);
+                    } catch (error) {
+                        this.logger.error({ err: error }, 'Failed reconciling SFU snapshot');
                         setTimeout(() => this.channelWrapper.nack(msg, false, true), 1000);
                     }
                     break;
