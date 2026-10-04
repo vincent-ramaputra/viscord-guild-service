@@ -10,6 +10,7 @@ import { PeerJoinedEventDTO } from "./dto/peer-joined-event.dto";
 import { PeerLeftEventDTO } from "./dto/peer-left-event.dto";
 import { ChannelsService } from "./channels.service";
 import { SfuStartedEventDTO } from "./dto/sfu-started-event.dto";
+import { SfuHeartbeatEventDTO } from "./dto/sfu-heartbeat-event.dto";
 import { VoicePresenceService } from "./voice-presence.service";
 
 @Injectable()
@@ -86,6 +87,20 @@ export class SfuEventConsumer implements OnModuleInit, OnModuleDestroy {
                     try {
                         await this.voicePresenceService.handleSfuStarted(data);
                         this.logger.log({ event: data }, 'sfu_started message handled')
+                        this.channelWrapper.ack(msg);
+                    } catch (error) {
+                        this.logger.error({ err: error }, 'Failed updating peer voice data');
+                        setTimeout(() => this.channelWrapper.nack(msg, false, true), 1000);
+                    }
+                    break;
+                }
+                case "sfu_heartbeat": {
+                    const data = await this.validateOrDrop(SfuHeartbeatEventDTO, payload.data, msg);
+                    if (!data) return;
+
+                    try {
+                        await this.voicePresenceService.handleSfuHeartbeat(data);
+                        this.logger.log({ event: data }, 'sfu_heartbeat message handled')
                         this.channelWrapper.ack(msg);
                     } catch (error) {
                         this.logger.error({ err: error }, 'Failed updating peer voice data');

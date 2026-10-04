@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { RedisService } from "src/redis/redis.service";
 import { PeerJoinedEventDTO } from "./dto/peer-joined-event.dto";
 import { VoiceState } from "./entities/voice-state";
@@ -11,17 +11,23 @@ import { ClientProxy } from "@nestjs/microservices";
 import { GET_VOICE_STATES_EVENT, VOICE_UPDATE_EVENT } from "src/constants/events";
 import { PeerLeftEventDTO } from "./dto/peer-left-event.dto";
 import { PEER_LEFT_SCRIPT } from "./redis-scripts/peer-left.script";
-import { VOICE_GRACE_MS } from "src/constants/time";
+import { SFU_HEARTBEAT_EXP_S, SWEEP_SFU_INTERVAL_MS, VOICE_GRACE_MS } from "src/constants/time";
 import { SfuStartedEventDTO } from "./dto/sfu-started-event.dto";
 import { Payload } from "src/interfaces/payload.dto";
+import { SfuHeartbeatEventDTO } from "./dto/sfu-heartbeat-event.dto";
 import { Channel } from "./entities/channel.entity";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import { VOICE_STATE_UPDATE_SCRIPT } from "./redis-scripts/voice-state-update.script";
 
 @Injectable()
-export class VoicePresenceService {
+export class VoicePresenceService implements OnModuleInit, OnModuleDestroy {
     private readonly logger = new Logger(VoicePresenceService.name);
+
+    private sweeping = false;
+    private sweepTimer?: NodeJS.Timeout;
+
+    private readonly SFU_INSTANCE_KEY = 'sfu:instance';
 
     constructor(
         private readonly redisService: RedisService,
@@ -108,6 +114,8 @@ export class VoicePresenceService {
                 JSON.stringify(voiceState)
             ]
         }) as [string, string?];
+
+        await redis.sAdd(this.SFU_INSTANCE_KEY, dto.sfuInstance);
 
         if (previousChannelId) {
             const recipients: string[] = await this.channelsService.getChannelRecipients(previousChannelId);
@@ -208,6 +216,11 @@ export class VoicePresenceService {
     }
 
     async handleSfuStarted(dto: SfuStartedEventDTO) {
+        const statesDropped = await this.dropStatesOf(dto.sfuInstance, dto.bootId);
+        this.logger.log({ sfuInstance: dto.sfuInstance, bootId: dto.bootId, dropped: statesDropped }, 'SFU started');
+    }
+
+    private async dropStatesOf(sfuInstance: string, exceptBootId?: string) {
         const redis = await this.redisService.getClient();
 
         const keys = new Set<string>();
@@ -228,7 +241,7 @@ export class VoicePresenceService {
                 try {
                     const state: VoiceState = JSON.parse(raw);
 
-                    if (state.sfuInstance === dto.sfuInstance && state.bootId !== dto.bootId) {
+                    if (state.sfuInstance === sfuInstance && state.bootId !== exceptBootId) {
                         staleStates.push(state);
                     }
                 } catch (error) {
@@ -254,7 +267,18 @@ export class VoicePresenceService {
             throw new Error(`${failed.length}/${staleStates.length} drops failed`);
         }
 
-        this.logger.log({ sfuInstance: dto.sfuInstance, bootId: dto.bootId, dropped: staleStates.length }, 'SFU started');
+        return staleStates.length;
+    }
+
+    async handleSfuHeartbeat(dto: SfuHeartbeatEventDTO) {
+        const redis = await this.redisService.getClient();
+
+        await redis.setEx(this.getSfuHeartbeatKey(dto.sfuInstance), SFU_HEARTBEAT_EXP_S, dto.bootId);
+        await redis.sAdd(this.SFU_INSTANCE_KEY, dto.sfuInstance);
+    }
+
+    private getSfuHeartbeatKey(sfuInstance: string) {
+        return `sfu:alive:${sfuInstance}`;
     }
 
     private getVoiceChannelKey(channelId: string) {
@@ -278,5 +302,35 @@ export class VoicePresenceService {
         };
     }
 
+    private async sweepSfu() {
+        if (this.sweeping) return;
+
+        this.sweeping = true;
+        try {
+            const redis = await this.redisService.getClient();
+
+            const sfuInstances = await redis.sMembers(this.SFU_INSTANCE_KEY);
+
+            for (const sfu of sfuInstances) {
+                if (!(await redis.get(this.getSfuHeartbeatKey(sfu)))) {
+                    await this.dropStatesOf(sfu);
+                    await redis.sRem(this.SFU_INSTANCE_KEY, sfu);
+                }
+            }
+        } catch (error) {
+            this.logger.error({ err: error }, 'SFU sweep failed')
+        }
+        finally {
+            this.sweeping = false;
+        }
+    }
+
+    onModuleInit() {
+        this.sweepTimer = setInterval(() => this.sweepSfu(), SWEEP_SFU_INTERVAL_MS);
+    }
+
+    onModuleDestroy() {
+        if (this.sweepTimer) clearInterval(this.sweepTimer);
+    }
 
 }
