@@ -55,6 +55,7 @@ import { PEER_JOINED_SCRIPT } from './redis-scripts/peer-joined.script';
 import { PeerLeftEventDTO } from './dto/peer-left-event.dto';
 import { PEER_LEFT_SCRIPT } from './redis-scripts/peer-left.script';
 import { VOICE_STATE_UPDATE_SCRIPT } from './redis-scripts/voice-state-update.script';
+import { SfuStartedEventDTO } from './dto/sfu-started-event.dto';
 
 @Injectable()
 export class ChannelsService {
@@ -1884,6 +1885,56 @@ export class ChannelsService {
     };
 
     this.gatewayMQ.emit(VOICE_UPDATE_EVENT, { recipients: recipients, data: payload } as Payload<VoiceEventDTO>);
+  }
+
+  async handleSfuStarted(dto: SfuStartedEventDTO) {
+    const redis = await this.redisService.getClient();
+
+    const keys = new Set<string>();
+
+    for await (const key of redis.scanIterator({ MATCH: 'voice:state:*', COUNT: 100 })) {
+      keys.add(key);
+    }
+
+    const staleStates: VoiceState[] = [];
+    const all = [...keys];
+
+    for (let i = 0; i < all.length; i += 100) {
+      const batch = all.slice(i, i + 100);
+      const raws = await redis.mGet(batch);
+      raws.forEach((raw, idx) => {
+        if (!raw) return;
+
+        try {
+          const state: VoiceState = JSON.parse(raw);
+
+          if (state.sfuInstance === dto.sfuInstance && state.bootId !== dto.bootId) {
+            staleStates.push(state);
+          }
+        } catch (error) {
+          this.logger.warn({ err: error, key: batch[idx] }, 'Unparsable voice state, skipping');
+        }
+      })
+    }
+
+    const promises: Promise<void>[] = [];
+    for (const state of staleStates) {
+      promises.push(this.handlePeerLeft({
+        userId: state.userId,
+        channelId: state.channelId,
+        sessionId: state.sessionId,
+        reason: 'dropped',
+        at: Date.now()
+      }));
+    }
+    const results = await Promise.allSettled(promises);
+    const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    if (failed.length > 0) {
+      this.logger.error({ errs: failed.map(f => f.reason), failed: failed.length, total: staleStates.length }, 'Some SFU-restart drops failed');
+      throw new Error(`${failed.length}/${staleStates.length} drops failed`);
+    }
+
+    this.logger.log({ sfuInstance: dto.sfuInstance, bootId: dto.bootId, dropped: staleStates.length }, 'SFU started');
   }
 
   private getVoiceChannelKey(channelId: string) {

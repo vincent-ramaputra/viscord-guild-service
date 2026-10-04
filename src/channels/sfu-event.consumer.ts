@@ -9,6 +9,7 @@ import { validate } from "class-validator";
 import { PeerJoinedEventDTO } from "./dto/peer-joined-event.dto";
 import { PeerLeftEventDTO } from "./dto/peer-left-event.dto";
 import { ChannelsService } from "./channels.service";
+import { SfuStartedEventDTO } from "./dto/sfu-started-event.dto";
 
 @Injectable()
 export class SfuEventConsumer implements OnModuleInit, OnModuleDestroy {
@@ -69,6 +70,20 @@ export class SfuEventConsumer implements OnModuleInit, OnModuleDestroy {
                     try {
                         await this.channelsService.handlePeerLeft(data);
                         this.logger.log({ event: data }, 'peer_left message handled')
+                        this.channelWrapper.ack(msg);
+                    } catch (error) {
+                        this.logger.error({ err: error }, 'Failed updating peer voice data');
+                        setTimeout(() => this.channelWrapper.nack(msg, false, true), 1000);
+                    }
+                    break;
+                }
+                case "sfu_started": {
+                    const data = await this.validateOrDrop(SfuStartedEventDTO, payload.data, msg);
+                    if (!data) return;
+
+                    try {
+                        await this.channelsService.handleSfuStarted(data);
+                        this.logger.log({ event: data }, 'sfu_started message handled')
                         this.channelWrapper.ack(msg);
                     } catch (error) {
                         this.logger.error({ err: error }, 'Failed updating peer voice data');
