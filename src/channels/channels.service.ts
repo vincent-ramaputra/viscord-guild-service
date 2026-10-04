@@ -853,12 +853,12 @@ export class ChannelsService {
 
     const client = await this.redisService.getClient();
 
-    const voiceStates = [];
+    const voiceStates: VoiceStateDTO[] = [];
     for (const channel of channels) {
       const participants = await client.sMembers(this.getVoiceChannelKey(channel.id));
       if (participants.length === 0) continue;
       const rawStates = await client.mGet(participants.map(uid => this.getVoiceStateKey(channel.id, uid)));
-      const states = rawStates.filter((v): v is string => v !== null).map(s => JSON.parse(s));
+      const states = rawStates.filter((v): v is string => v !== null).map(s => this.toVoiceStateDTO(JSON.parse(s)));
       voiceStates.push(...states);
     }
 
