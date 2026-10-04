@@ -23,7 +23,7 @@ import { VoiceState } from "./entities/voice-state";
 import { VoiceEventType } from "./enums/voice-event-type";
 import { VoiceStateDTO } from "./dto/voice-state.dto";
 import { VoiceRingState } from "./entities/voice-ring-state";
-import { VOICE_RING_TIMEOUT } from "src/constants/time";
+import { VOICE_GRACE_MS, VOICE_RING_TIMEOUT } from "src/constants/time";
 import { VoiceRingStateDTO } from "./dto/voice-ring-state.dto";
 import { Guild } from "src/guilds/entities/guild.entity";
 import { UserProfilesService } from "src/user-profiles/grpc/user-profiles.service";
@@ -50,6 +50,11 @@ import { CheckPermissionDTO } from "./dto/check-permission.dto";
 import { CreateVoiceTicketResponseDTO } from './dto/create-voice-ticket-response.dto';
 import { VoiceTicketService } from './voice-ticket.service';
 import { ConfigService } from '@nestjs/config';
+import { PeerJoinedEventDTO } from './dto/peer-joined-event.dto';
+import { PEER_JOINED_SCRIPT } from './redis-scripts/peer-joined.script';
+import { PeerLeftEventDTO } from './dto/peer-left-event.dto';
+import { PEER_LEFT_SCRIPT } from './redis-scripts/peer-left.script';
+import { VOICE_STATE_UPDATE_SCRIPT } from './redis-scripts/voice-state-update.script';
 
 @Injectable()
 export class ChannelsService {
@@ -840,94 +845,6 @@ export class ChannelsService {
     }
   }
 
-
-  async handleVoiceJoin(dto: VoiceEventDTO) {
-    const channel: Channel = await this.channelsRepository
-      .createQueryBuilder('channel')
-      .where('channel.id = :channelId', { channelId: dto.channelId })
-      .getOne();
-
-    if (!channel) {
-      return {
-        status: HttpStatus.BAD_REQUEST,
-        data: null,
-        message: 'Channel not found'
-      };
-    }
-
-    const recipients: string[] = await this.getChannelRecipients(channel.id)
-
-    if (!recipients.find(id => id === dto.userId)) {
-      return {
-        status: HttpStatus.FORBIDDEN,
-        data: null,
-        message: 'Channel not found'
-      };
-    }
-
-    const client = await this.redisService.getClient();
-    const state: VoiceState = { channelId: dto.channelId, userId: dto.userId, isDeafened: dto.data.isDeafened, isMuted: dto.data.isMuted };
-    await client.set(this.getVoiceStateKey(dto.channelId, dto.userId), JSON.stringify(state));
-    await client.sAdd(this.getVoiceChannelKey(dto.channelId), dto.userId);
-    await this.handleDismissVoiceRing(dto.userId, dto.channelId);
-
-    const payload: VoiceEventDTO = {
-      channelId: state.channelId,
-      userId: state.userId,
-      type: VoiceEventType.VOICE_JOIN,
-      data: state as VoiceStateDTO
-    };
-
-    this.gatewayMQ.emit(VOICE_UPDATE_EVENT, { recipients: recipients, data: payload } as Payload<VoiceEventDTO>);
-  }
-
-  async handleVoiceLeave(dto: VoiceEventDTO) {
-    let channel = await this.channelsRepository
-      .createQueryBuilder('channel')
-      .where('channel.id = :channelId', { channelId: dto.channelId })
-      .getOne();
-    if (!channel) {
-      return {
-        status: HttpStatus.BAD_REQUEST,
-        data: null,
-        message: 'Channel not found'
-      };
-    }
-
-    const recipients: string[] = await this.getChannelRecipients(channel.id);
-
-    if (!recipients.find(id => id === dto.userId)) {
-      return {
-        status: HttpStatus.FORBIDDEN,
-        data: null,
-        message: 'Channel not found'
-      };
-    }
-
-    const client = await this.redisService.getClient();
-    await client.del(this.getVoiceStateKey(dto.channelId, dto.userId));
-    await client.sRem(this.getVoiceChannelKey(dto.channelId), dto.userId);
-
-    const voiceStatesMember = await client.sMembers(this.getVoiceChannelKey(dto.channelId))
-
-    if (voiceStatesMember.length === 0) {
-      await this.clearChannelVoiceRings(dto.channelId);
-    }
-
-    const payload: VoiceEventDTO = {
-      channelId: dto.channelId,
-      userId: dto.userId,
-      type: VoiceEventType.VOICE_LEAVE,
-      data: {
-        channelId: dto.channelId,
-        userId: dto.userId
-      } as VoiceStateDTO
-
-    };
-
-    this.gatewayMQ.emit(VOICE_UPDATE_EVENT, { recipients: recipients, data: payload } as Payload<VoiceEventDTO>);
-  }
-
   async handleGetVoiceStates(userId: string) {
     const channels = await this.channelsRepository
       .createQueryBuilder('channel')
@@ -936,12 +853,12 @@ export class ChannelsService {
 
     const client = await this.redisService.getClient();
 
-    const voiceStates = [];
+    const voiceStates: VoiceStateDTO[] = [];
     for (const channel of channels) {
       const participants = await client.sMembers(this.getVoiceChannelKey(channel.id));
       if (participants.length === 0) continue;
       const rawStates = await client.mGet(participants.map(uid => this.getVoiceStateKey(channel.id, uid)));
-      const states = rawStates.filter((v): v is string => v !== null).map(s => JSON.parse(s));
+      const states = rawStates.filter((v): v is string => v !== null).map(s => this.toVoiceStateDTO(JSON.parse(s)));
       voiceStates.push(...states);
     }
 
@@ -988,45 +905,30 @@ export class ChannelsService {
   }
 
   async handleVoiceStateUpdate(dto: VoiceEventDTO) {
-    const client = await this.redisService.getClient();
-    const key = this.getVoiceStateKey(dto.channelId, dto.userId);
-    const rawState = await client.get(key);
-    if (typeof (rawState) !== 'string') return;
-    const oldState: VoiceState = JSON.parse(rawState);
-    const newState: VoiceState = {
-      ...oldState,
-      ...dto.data
-    };
+    const { isMuted, isDeafened } = dto.data ?? {};
+    const valid = (v: unknown) => v === undefined || typeof v === 'boolean';
+    if (!valid(isMuted) || !valid(isDeafened)) return;
 
-    await client.set(key, JSON.stringify(newState));
+    const redis = await this.redisService.getClient();
+    const [outcome, rawState] = await redis.eval(VOICE_STATE_UPDATE_SCRIPT, {
+      keys: [this.getVoiceStateKey(dto.channelId, dto.userId)],
+      arguments: [
+        isMuted === undefined ? '' : String(isMuted),
+        isDeafened === undefined ? '' : String(isDeafened),
+      ]
+    }) as [string, string?];
 
-    let channel = await this.channelsRepository
-      .createQueryBuilder('channel')
-      .innerJoinAndSelect('channel.recipients', 'channel_recipient')
-      .where('channel.id = :channelId', { channelId: dto.channelId })
-      .getOne();
-    if (!channel) {
-      return {
-        status: HttpStatus.BAD_REQUEST,
-        data: null,
-        message: 'Channel not found'
-      };
-    }
+    if (outcome !== 'updated') return;
 
-    if (!channel.recipients.find(r => r.userId === dto.userId)) {
-      return {
-        status: HttpStatus.FORBIDDEN,
-        data: null,
-        message: 'Channel not found'
-      };
-    }
-    const recipients = channel.recipients.map(r => r.userId);
+    const state: VoiceState = JSON.parse(rawState);
+
+    const recipients = await this.getChannelRecipients(dto.channelId);
 
     const payload: VoiceEventDTO = {
       channelId: dto.channelId,
       userId: dto.userId,
       type: VoiceEventType.STATE_UPDATE,
-      data: newState
+      data: this.toVoiceStateDTO(state)
     }
 
     this.gatewayMQ.emit(VOICE_UPDATE_EVENT, { recipients: recipients, data: payload } as Payload<VoiceEventDTO>)
@@ -1096,6 +998,15 @@ export class ChannelsService {
 
   //   return inviteResponse;
   // }
+
+  private toVoiceStateDTO(state: VoiceState): VoiceStateDTO {
+    return {
+      channelId: state.channelId,
+      userId: state.userId,
+      isDeafened: state.isDeafened,
+      isMuted: state.isMuted
+    };
+  }
 
   async getChannelInvites(userId: string, channelId: string): Promise<Result<InviteResponseDTO[]>> {
     const channel = await this.channelsRepository.findOne({ where: { id: channelId } });
@@ -1850,12 +1761,141 @@ export class ChannelsService {
     return { allowed: true };
   }
 
+  async handlePeerJoined(dto: PeerJoinedEventDTO) {
+    const voiceState: VoiceState = {
+      userId: dto.userId,
+      channelId: dto.channelId,
+      bootId: dto.bootId,
+      sfuInstance: dto.sfuInstance,
+      isDeafened: dto.isDeafened,
+      isMuted: dto.isMuted,
+      sessionId: dto.sessionId,
+      status: 'connected'
+    };
+
+    const redis = await this.redisService.getClient();
+    const [outcome, previousChannelId] = await redis.eval(PEER_JOINED_SCRIPT, {
+      keys: [
+        this.getVoiceUserChannelKey(dto.userId),
+        this.getVoiceStateKey(dto.channelId, dto.userId),
+        this.getVoiceChannelKey(dto.channelId)
+      ],
+      arguments: [
+        dto.userId,
+        dto.channelId,
+        dto.sessionId,
+        JSON.stringify(voiceState)
+      ]
+    }) as [string, string?];
+
+    if (previousChannelId) {
+      const recipients: string[] = await this.getChannelRecipients(previousChannelId);
+
+      const payload: VoiceEventDTO = {
+        channelId: previousChannelId,
+        userId: dto.userId,
+        type: VoiceEventType.VOICE_LEAVE,
+        data: {
+          channelId: previousChannelId,
+          userId: dto.userId,
+        } as VoiceStateDTO
+      };
+
+
+      this.gatewayMQ.emit(VOICE_UPDATE_EVENT, { recipients: recipients, data: payload } as Payload<VoiceEventDTO>);
+    }
+
+    if (outcome === 'duplicate' || outcome === 'reconnected') return;
+
+    const recipients = await this.getChannelRecipients(dto.channelId);
+
+    await this.handleDismissVoiceRing(dto.userId, dto.channelId);
+
+    const payload: VoiceEventDTO = {
+      channelId: dto.channelId,
+      userId: dto.userId,
+      type: VoiceEventType.VOICE_JOIN,
+      data: {
+        channelId: dto.channelId,
+        userId: dto.userId,
+        isMuted: dto.isMuted,
+        isDeafened: dto.isDeafened
+      } as VoiceStateDTO
+    };
+
+    this.gatewayMQ.emit(VOICE_UPDATE_EVENT, { recipients: recipients, data: payload } as Payload<VoiceEventDTO>);
+  }
+
+  async handlePeerLeft(dto: PeerLeftEventDTO) {
+    const [outcome, remaining] = await this.runPeerLeftScript(dto, dto.reason);
+
+    if (outcome === 'marked') await this.scheduleLeaveCheck(dto);
+    if (outcome === 'removed') await this.onVoiceRemoved(dto.channelId, dto.userId, remaining);
+  }
+
+  private async runPeerLeftScript(dto: PeerLeftEventDTO, mode: 'left' | 'dropped' | 'check'): Promise<[string, number?]> {
+    const redis = await this.redisService.getClient();
+    const [outcome, remaining] = await redis.eval(PEER_LEFT_SCRIPT, {
+      keys: [
+        this.getVoiceUserChannelKey(dto.userId),
+        this.getVoiceStateKey(dto.channelId, dto.userId),
+        this.getVoiceChannelKey(dto.channelId)
+      ],
+      arguments: [
+        dto.userId,
+        dto.channelId,
+        dto.sessionId,
+        mode
+      ]
+    }) as [string, number?];
+
+    return [outcome, remaining];
+
+  }
+
+  private async scheduleLeaveCheck(dto: PeerLeftEventDTO) {
+    setTimeout(async () => {
+      try {
+        const [outcome, remaining] = await this.runPeerLeftScript(dto, 'check');
+        if (outcome !== 'removed') return;
+
+        await this.onVoiceRemoved(dto.channelId, dto.userId, remaining);
+      } catch (error) {
+        this.logger.error({ err: error }, 'Error when checking after grace period');
+      }
+    }, VOICE_GRACE_MS);
+  }
+
+  private async onVoiceRemoved(channelId: string, userId: string, remaining: number) {
+    const recipients = await this.getChannelRecipients(channelId);
+
+    if (remaining === 0) {
+      await this.clearChannelVoiceRings(channelId);
+    }
+
+    const payload: VoiceEventDTO = {
+      channelId: channelId,
+      userId: userId,
+      type: VoiceEventType.VOICE_LEAVE,
+      data: {
+        channelId,
+        userId,
+      } as VoiceStateDTO
+    };
+
+    this.gatewayMQ.emit(VOICE_UPDATE_EVENT, { recipients: recipients, data: payload } as Payload<VoiceEventDTO>);
+  }
+
   private getVoiceChannelKey(channelId: string) {
     return `voice:channel:${channelId}`;
   }
 
   private getVoiceStateKey(channelId: string, userId: string) {
-    return `voice:${channelId}:${userId}`
+    return `voice:state:${channelId}:${userId}`
+  }
+
+  private getVoiceUserChannelKey(userId: string) {
+    return `voice:user:${userId}`;
   }
 
   private getVoiceRingKey(channelId: string, userId: string) {
