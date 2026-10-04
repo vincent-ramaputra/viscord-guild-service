@@ -2,6 +2,7 @@
 export const USER_QUEUE = 'user_queue';
 export const GATEWAY_QUEUE = 'gateway_queue';
 export const CHANNEL_QUEUE = 'channel_queue';
+export const SFU_QUEUE = 'sfu_events';
 
 export const FRIEND_REQUEST_RECEIVED_EVENT = 'friend_request_received';
 export const FRIEND_REMOVED_EVENT = 'friend_removed';
@@ -44,3 +45,6 @@ export const CREATE_CONSUMER = 'create_consumer';
 export const MESSAGE_CREATED = 'message_created';
 
 export const GUILD_UPDATE_EVENT = 'guild_update';
+
+export const PEER_JOINED = 'peer_joined';
+export const PEER_LEFT = 'peer_left';
