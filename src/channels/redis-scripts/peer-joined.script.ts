@@ -12,7 +12,10 @@
  * ARGV[4] the new state as JSON (VoiceState with status 'connected')
  *
  * Returns { outcome, previousChannelId? }:
- *   'duplicate'    this session is already stored (redelivered message), nothing changed
+ *   'duplicate'    this session is already stored and connected (redelivered message), nothing changed
+ *   'restored'     this session is stored but marked disconnected (the sweeper or a drop marked it while the
+ *                  SFU still had the peer, seen again through sfu_snapshot); status set back to connected,
+ *                  every other stored field (e.g. a newer mute state) kept, no broadcast needed
  *   'reconnected'  same channel, new session (reconnect within the grace period), no broadcast needed
  *   'moved'        user was in voice in previousChannelId; that state was removed, then the new one written
  *   'joined'       user was not in voice
@@ -43,7 +46,13 @@ if currentChannelId == channelId then
     if raw then
         local stored = cjson.decode(raw)
         if stored.sessionId == sessionId then
-            return { 'duplicate' }
+            if stored.status == 'connected' then
+                return { 'duplicate' }
+            end
+            -- Same session, still on the SFU: undo the drop so its pending leave check finds it connected.
+            stored.status = 'connected'
+            redis.call('SET', stateKey, cjson.encode(stored))
+            return { 'restored' }
         end
         writeNewState()
         return { 'reconnected' }
