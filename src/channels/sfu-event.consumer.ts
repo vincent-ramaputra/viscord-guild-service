@@ -8,6 +8,7 @@ import { SfuEvent } from "./dto/sfu-event";
 import { validate } from "class-validator";
 import { PeerJoinedEventDTO } from "./dto/peer-joined-event.dto";
 import { PeerLeftEventDTO } from "./dto/peer-left-event.dto";
+import { ChannelsService } from "./channels.service";
 
 @Injectable()
 export class SfuEventConsumer implements OnModuleInit, OnModuleDestroy {
@@ -17,8 +18,9 @@ export class SfuEventConsumer implements OnModuleInit, OnModuleDestroy {
     private connectionManager?: AmqpConnectionManager;
 
     constructor(
-        private readonly config: ConfigService
-    ) {}
+        private readonly config: ConfigService,
+        private readonly channelsService: ChannelsService
+    ) { }
 
     async onModuleInit() {
         const url = `amqp://${this.config.getOrThrow('RMQ_HOST')}:${this.config.getOrThrow('RMQ_PORT')}`;
@@ -48,17 +50,23 @@ export class SfuEventConsumer implements OnModuleInit, OnModuleDestroy {
             switch (payload.pattern) {
                 case "peer_joined": {
                     const data = await this.validateOrDrop(PeerJoinedEventDTO, payload.data, msg);
-                    if (!data)return;
+                    if (!data) return;
 
-                    this.logger.log({event: data}, 'peer_joined message handled')
-                    this.channelWrapper.ack(msg);
+                    try {
+                        await this.channelsService.handlePeerJoined(data);
+                        this.logger.log({ event: data }, 'peer_joined message handled')
+                        this.channelWrapper.ack(msg);
+                    } catch (error) {
+                        this.logger.error({ err: error }, 'Failed updating peer voice data');
+                        setTimeout(() => this.channelWrapper.nack(msg, false, true), 1000);
+                    }
                     break;
                 }
                 case "peer_left": {
                     const data = await this.validateOrDrop(PeerLeftEventDTO, payload.data, msg);
                     if (!data) return;
 
-                    this.logger.log({event: data}, 'peer_left message handled')
+                    this.logger.log({ event: data }, 'peer_left message handled')
                     this.channelWrapper.ack(msg);
                     break;
                 }
@@ -68,7 +76,7 @@ export class SfuEventConsumer implements OnModuleInit, OnModuleDestroy {
                 }
             }
         } catch (error) {
-            this.logger.error({err: error}, 'Failed consuming message');
+            this.logger.error({ err: error }, 'Failed consuming message');
             this.channelWrapper.nack(msg, false, false);
         }
     }
