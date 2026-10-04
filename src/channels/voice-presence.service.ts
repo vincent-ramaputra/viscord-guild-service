@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { RedisService } from "src/redis/redis.service";
 import { PeerJoinedEventDTO } from "./dto/peer-joined-event.dto";
 import { VoiceState } from "./entities/voice-state";
@@ -11,17 +11,24 @@ import { ClientProxy } from "@nestjs/microservices";
 import { GET_VOICE_STATES_EVENT, VOICE_UPDATE_EVENT } from "src/constants/events";
 import { PeerLeftEventDTO } from "./dto/peer-left-event.dto";
 import { PEER_LEFT_SCRIPT } from "./redis-scripts/peer-left.script";
-import { VOICE_GRACE_MS } from "src/constants/time";
+import { SFU_HEARTBEAT_EXP_S, SWEEP_SFU_INTERVAL_MS, VOICE_GRACE_MS } from "src/constants/time";
 import { SfuStartedEventDTO } from "./dto/sfu-started-event.dto";
 import { Payload } from "src/interfaces/payload.dto";
+import { SfuHeartbeatEventDTO } from "./dto/sfu-heartbeat-event.dto";
+import { SfuSnapshotEventDTO } from "./dto/sfu-snapshot-event.dto";
 import { Channel } from "./entities/channel.entity";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import { VOICE_STATE_UPDATE_SCRIPT } from "./redis-scripts/voice-state-update.script";
 
 @Injectable()
-export class VoicePresenceService {
+export class VoicePresenceService implements OnModuleInit, OnModuleDestroy {
     private readonly logger = new Logger(VoicePresenceService.name);
+
+    private sweeping = false;
+    private sweepTimer?: NodeJS.Timeout;
+
+    private readonly SFU_INSTANCE_KEY = 'sfu:instance';
 
     constructor(
         private readonly redisService: RedisService,
@@ -109,6 +116,8 @@ export class VoicePresenceService {
             ]
         }) as [string, string?];
 
+        await redis.sAdd(this.SFU_INSTANCE_KEY, dto.sfuInstance);
+
         if (previousChannelId) {
             const recipients: string[] = await this.channelsService.getChannelRecipients(previousChannelId);
 
@@ -126,7 +135,8 @@ export class VoicePresenceService {
             this.gatewayMQ.emit(VOICE_UPDATE_EVENT, { recipients: recipients, data: payload } as Payload<VoiceEventDTO>);
         }
 
-        if (outcome === 'duplicate' || outcome === 'reconnected') return;
+        // Nobody saw these users leave, so there's nothing to announce.
+        if (outcome === 'duplicate' || outcome === 'restored' || outcome === 'reconnected') return;
 
         const recipients = await this.channelsService.getChannelRecipients(dto.channelId);
 
@@ -208,15 +218,81 @@ export class VoicePresenceService {
     }
 
     async handleSfuStarted(dto: SfuStartedEventDTO) {
+        const statesDropped = await this.dropStatesOf(dto.sfuInstance, dto.bootId);
+        this.logger.log({ sfuInstance: dto.sfuInstance, bootId: dto.bootId, dropped: statesDropped }, 'SFU started');
+    }
+
+    private async dropStatesOf(sfuInstance: string, exceptBootId?: string) {
+        const staleStates = (await this.readAllVoiceStates())
+            .filter(state => state.sfuInstance === sfuInstance && state.bootId !== exceptBootId);
+
+        await this.settleAll(staleStates.map(state => this.dropState(state)), 'drops');
+
+        return staleStates.length;
+    }
+
+    /**
+     * Makes the voice states of one SFU match its list of current peers. Repairs joins and leaves that were lost
+     * while the SFU couldn't reach RabbitMQ, and undoes drops by the sweeper for peers that are still connected.
+     */
+    async handleSfuSnapshot(dto: SfuSnapshotEventDTO) {
+        const states = await this.readAllVoiceStates();
+
+        const snapshotSessions = new Set(dto.peers.map(peer => peer.sessionId));
+        const stateByUser = new Map(states.map(state => [state.userId, state]));
+
+        // A user whose state belongs to another SFU instance has moved on; this snapshot can be older than that.
+        const peersToApply = dto.peers.filter(peer => {
+            const state = stateByUser.get(peer.userId);
+            return !state || state.sfuInstance === dto.sfuInstance;
+        });
+        // Only this instance's states can be judged by its snapshot.
+        const statesToDrop = states.filter(state => state.sfuInstance === dto.sfuInstance && !snapshotSessions.has(state.sessionId));
+
+        // Joins first: if a user reconnected to this SFU under a new session, storing it makes the old session's
+        // drop a no-op ('stale') instead of marking the user disconnected in between.
+        await this.settleAll(peersToApply.map(peer => this.handlePeerJoined({
+            userId: peer.userId,
+            channelId: peer.channelId,
+            sessionId: peer.sessionId,
+            sfuInstance: dto.sfuInstance,
+            bootId: dto.bootId,
+            isMuted: peer.isMuted,
+            isDeafened: peer.isDeafened,
+            at: dto.at,
+        })), 'snapshot joins');
+        await this.settleAll(statesToDrop.map(state => this.dropState(state)), 'snapshot drops');
+
+        this.logger.log({
+            sfuInstance: dto.sfuInstance,
+            bootId: dto.bootId,
+            peers: dto.peers.length,
+            applied: peersToApply.length,
+            skipped: dto.peers.length - peersToApply.length,
+            dropped: statesToDrop.length,
+        }, 'SFU snapshot reconciled');
+    }
+
+    private dropState(state: VoiceState) {
+        return this.handlePeerLeft({
+            userId: state.userId,
+            channelId: state.channelId,
+            sessionId: state.sessionId,
+            reason: 'dropped',
+            at: Date.now()
+        });
+    }
+
+    /** Every voice state in Redis. SCAN, not KEYS, so Redis isn't blocked; unparseable states are skipped. */
+    private async readAllVoiceStates(): Promise<VoiceState[]> {
         const redis = await this.redisService.getClient();
 
         const keys = new Set<string>();
-
         for await (const key of redis.scanIterator({ MATCH: 'voice:state:*', COUNT: 100 })) {
             keys.add(key);
         }
 
-        const staleStates: VoiceState[] = [];
+        const states: VoiceState[] = [];
         const all = [...keys];
 
         for (let i = 0; i < all.length; i += 100) {
@@ -226,35 +302,35 @@ export class VoicePresenceService {
                 if (!raw) return;
 
                 try {
-                    const state: VoiceState = JSON.parse(raw);
-
-                    if (state.sfuInstance === dto.sfuInstance && state.bootId !== dto.bootId) {
-                        staleStates.push(state);
-                    }
+                    states.push(JSON.parse(raw));
                 } catch (error) {
                     this.logger.warn({ err: error, key: batch[idx] }, 'Unparsable voice state, skipping');
                 }
-            })
+            });
         }
 
-        const promises: Promise<void>[] = [];
-        for (const state of staleStates) {
-            promises.push(this.handlePeerLeft({
-                userId: state.userId,
-                channelId: state.channelId,
-                sessionId: state.sessionId,
-                reason: 'dropped',
-                at: Date.now()
-            }));
-        }
-        const results = await Promise.allSettled(promises);
+        return states;
+    }
+
+    /** Waits for every task; if any failed, logs all failures and throws so the message is retried. */
+    private async settleAll(tasks: Promise<unknown>[], what: string) {
+        const results = await Promise.allSettled(tasks);
         const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
         if (failed.length > 0) {
-            this.logger.error({ errs: failed.map(f => f.reason), failed: failed.length, total: staleStates.length }, 'Some SFU-restart drops failed');
-            throw new Error(`${failed.length}/${staleStates.length} drops failed`);
+            this.logger.error({ errs: failed.map(f => f.reason), failed: failed.length, total: tasks.length }, `Some ${what} failed`);
+            throw new Error(`${failed.length}/${tasks.length} ${what} failed`);
         }
+    }
 
-        this.logger.log({ sfuInstance: dto.sfuInstance, bootId: dto.bootId, dropped: staleStates.length }, 'SFU started');
+    async handleSfuHeartbeat(dto: SfuHeartbeatEventDTO) {
+        const redis = await this.redisService.getClient();
+
+        await redis.setEx(this.getSfuHeartbeatKey(dto.sfuInstance), SFU_HEARTBEAT_EXP_S, dto.bootId);
+        await redis.sAdd(this.SFU_INSTANCE_KEY, dto.sfuInstance);
+    }
+
+    private getSfuHeartbeatKey(sfuInstance: string) {
+        return `sfu:alive:${sfuInstance}`;
     }
 
     private getVoiceChannelKey(channelId: string) {
@@ -278,5 +354,35 @@ export class VoicePresenceService {
         };
     }
 
+    private async sweepSfu() {
+        if (this.sweeping) return;
+
+        this.sweeping = true;
+        try {
+            const redis = await this.redisService.getClient();
+
+            const sfuInstances = await redis.sMembers(this.SFU_INSTANCE_KEY);
+
+            for (const sfu of sfuInstances) {
+                if (!(await redis.get(this.getSfuHeartbeatKey(sfu)))) {
+                    await this.dropStatesOf(sfu);
+                    await redis.sRem(this.SFU_INSTANCE_KEY, sfu);
+                }
+            }
+        } catch (error) {
+            this.logger.error({ err: error }, 'SFU sweep failed')
+        }
+        finally {
+            this.sweeping = false;
+        }
+    }
+
+    onModuleInit() {
+        this.sweepTimer = setInterval(() => this.sweepSfu(), SWEEP_SFU_INTERVAL_MS);
+    }
+
+    onModuleDestroy() {
+        if (this.sweepTimer) clearInterval(this.sweepTimer);
+    }
 
 }
