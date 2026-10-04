@@ -10,6 +10,7 @@ import { PeerJoinedEventDTO } from "./dto/peer-joined-event.dto";
 import { PeerLeftEventDTO } from "./dto/peer-left-event.dto";
 import { ChannelsService } from "./channels.service";
 import { SfuStartedEventDTO } from "./dto/sfu-started-event.dto";
+import { VoicePresenceService } from "./voice-presence.service";
 
 @Injectable()
 export class SfuEventConsumer implements OnModuleInit, OnModuleDestroy {
@@ -20,7 +21,8 @@ export class SfuEventConsumer implements OnModuleInit, OnModuleDestroy {
 
     constructor(
         private readonly config: ConfigService,
-        private readonly channelsService: ChannelsService
+        private readonly channelsService: ChannelsService,
+        private readonly voicePresenceService: VoicePresenceService
     ) { }
 
     async onModuleInit() {
@@ -54,7 +56,7 @@ export class SfuEventConsumer implements OnModuleInit, OnModuleDestroy {
                     if (!data) return;
 
                     try {
-                        await this.channelsService.handlePeerJoined(data);
+                        await this.voicePresenceService.handlePeerJoined(data);
                         this.logger.log({ event: data }, 'peer_joined message handled')
                         this.channelWrapper.ack(msg);
                     } catch (error) {
@@ -68,7 +70,7 @@ export class SfuEventConsumer implements OnModuleInit, OnModuleDestroy {
                     if (!data) return;
 
                     try {
-                        await this.channelsService.handlePeerLeft(data);
+                        await this.voicePresenceService.handlePeerLeft(data);
                         this.logger.log({ event: data }, 'peer_left message handled')
                         this.channelWrapper.ack(msg);
                     } catch (error) {
@@ -82,7 +84,7 @@ export class SfuEventConsumer implements OnModuleInit, OnModuleDestroy {
                     if (!data) return;
 
                     try {
-                        await this.channelsService.handleSfuStarted(data);
+                        await this.voicePresenceService.handleSfuStarted(data);
                         this.logger.log({ event: data }, 'sfu_started message handled')
                         this.channelWrapper.ack(msg);
                     } catch (error) {

@@ -18,10 +18,11 @@ import { ConfigService } from '@nestjs/config';
 import { GATEWAY_QUEUE } from 'src/constants/events';
 import { VoiceTicketService } from './voice-ticket.service';
 import { SfuEventConsumer } from './sfu-event.consumer';
+import { VoicePresenceService } from './voice-presence.service';
 
 @Module({
   controllers: [GuildChannelsController, DMChannelsController, ChannelsController],
-  providers: [ChannelsService, VoiceTicketService, SfuEventConsumer],
+  providers: [ChannelsService, VoiceTicketService, SfuEventConsumer, VoicePresenceService],
   imports: [
     HttpModule,
     RedisModule,
