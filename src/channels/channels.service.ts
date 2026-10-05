@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, forwardRef, HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
+import { forwardRef, HttpStatus, Inject, Injectable, Logger } from '@nestjs/common';
 import { CreateChannelDTO } from './dto/create-channel.dto';
 import { CreateDMChannelDTO } from "./dto/create-dm-channel.dto";
 import { Result } from "src/interfaces/result.interface";
@@ -12,6 +12,7 @@ import { toChannelEntityFromCreateDMDTO, toChannelEntityFromCreateDTO, toChannel
 import { ChannelType } from "./enums/channel-type.enum";
 import { UserProfileResponseDTO } from "src/user-profiles/dto/user-profile-response.dto";
 import { ClientGrpc, ClientProxy, RpcException } from "@nestjs/microservices";
+import { status } from "@grpc/grpc-js";
 import { GET_VOICE_RINGS_EVENT, GUILD_UPDATE_EVENT, MESSAGE_RECEIVED_EVENT, USER_TYPING_EVENT, VOICE_RING_DISMISS_EVENT, VOICE_RING_EVENT } from "src/constants/events";
 import { Payload } from "src/interfaces/payload.dto";
 import { UserTypingDTO } from "src/channels/dto/user-typing.dto";
@@ -1614,7 +1615,7 @@ export class ChannelsService {
         return {
           status: HttpStatus.FORBIDDEN,
           data: false,
-          message: "User is not allowed to send messages on this channel"
+          message: "User is not allowed to view this channel"
         };
       }
     }
@@ -1631,7 +1632,7 @@ export class ChannelsService {
     const channel = await this.channelsRepository.findOne({ where: { id: dto.channelId }, relations: ['permissionOverwrites', 'recipients'] });
 
     if (!channel) {
-      throw new BadRequestException("Invalid channel ID");
+      throw new RpcException({ code: status.INVALID_ARGUMENT, message: "Invalid channel ID" });
     }
 
     if (channel.type === ChannelType.DM) {
@@ -1659,25 +1660,25 @@ export class ChannelsService {
 
   async checkPermission(dto: CheckPermissionDTO): Promise<CheckPermissionResponseDTO> {
     if (dto.userId == null || dto.channelId == null) {
-      throw new RpcException(new BadRequestException("Invalid channel or user ID"));
+      throw new RpcException({ code: status.INVALID_ARGUMENT, message: "Invalid channel or user ID" });
     }
 
     const channel = await this.channelsRepository.findOne({ where: { id: dto.channelId }, relations: ['permissionOverwrites', 'recipients'] });
     if (channel == null) {
-      throw new RpcException(new BadRequestException("Invalid channel or user ID"));
+      throw new RpcException({ code: status.INVALID_ARGUMENT, message: "Invalid channel or user ID" });
     }
 
     if (channel.type === ChannelType.DM) {
-      throw new RpcException(new BadRequestException("DM channels do not have permissions"));
+      throw new RpcException({ code: status.INVALID_ARGUMENT, message: "DM channels do not have permissions" });
     }
 
     const isMember = await this.guildsService.isGuildMember(dto.userId, channel.guildId);
     if (!isMember) {
-      throw new RpcException(new ForbiddenException("User is not a member of this guild"));
+      throw new RpcException({ code: status.PERMISSION_DENIED, message: "User is not a member of this guild" });
     }
 
     if (channel.type === ChannelType.Voice) {
-      throw new RpcException(new ForbiddenException("Cannot send messages in this channel"));
+      throw new RpcException({ code: status.PERMISSION_DENIED, message: "Cannot send messages in this channel" });
     }
 
     let permissionToCheck = 0n;
