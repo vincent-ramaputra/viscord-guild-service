@@ -262,6 +262,11 @@ export class ChannelsController {
     return await this.channelsService.canUserSendMessage(userId, channelId);
   }
 
+  @GrpcMethod('ChannelsService', 'CanUserGetChannelMessages')
+  async canUserGetChannelMessages({ userId, channelId }: { userId: string, channelId: string }) {
+    return await this.channelsService.canUserGetChannelMessages(userId, channelId);
+  }
+
   @MessagePattern(MESSAGE_CREATED)
   async incrementUnreadCount(@Body(new ValidationPipe({ transform: true })) dto: MessageResponseDTO) {
     await this.channelsService.onMessageCreated(dto);

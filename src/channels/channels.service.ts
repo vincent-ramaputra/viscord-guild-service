@@ -1614,7 +1614,7 @@ export class ChannelsService {
         return {
           status: HttpStatus.FORBIDDEN,
           data: false,
-          message: "User is not allowed to send messages on this channel"
+          message: "User is not allowed to view this channel"
         };
       }
     }
