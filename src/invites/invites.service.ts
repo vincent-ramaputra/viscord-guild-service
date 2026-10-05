@@ -131,7 +131,6 @@ export class InvitesService {
 
   async findOne(channelId: string, maxAge: number | null): Promise<Result<InviteResponseDTO>> {
     const existingInvite = await this.invitesRepository.findOneBy({ channelId, maxAge: maxAge ?? IsNull() });
-    const payload: InviteResponseDTO = toInviteResponseDTO(existingInvite);
 
     if (!existingInvite) {
       return {
@@ -140,6 +139,8 @@ export class InvitesService {
         message: 'Invite does not exist'
       };
     }
+
+    const payload: InviteResponseDTO = toInviteResponseDTO(existingInvite);
 
     return {
       status: HttpStatus.OK,
