@@ -267,6 +267,11 @@ export class ChannelsController {
     return await this.channelsService.canUserGetChannelMessages(userId, channelId);
   }
 
+  @GrpcMethod('ChannelsService', 'CanUserAttachFiles')
+  async canUserAttachFiles({ userId, channelId }: { userId: string, channelId: string }) {
+    return await this.channelsService.canUserAttachFiles(userId, channelId);
+  }
+
   @MessagePattern(MESSAGE_CREATED)
   async incrementUnreadCount(@Body(new ValidationPipe({ transform: true })) dto: MessageResponseDTO) {
     await this.channelsService.onMessageCreated(dto);
